@@ -1,5 +1,5 @@
 # docker-compose.yml
-# Template for a single Claude Code dev container.
+# Template for a single Agent dev container.
 # Launched via new-container.sh — don't run directly.
 
 services:

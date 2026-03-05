@@ -1,5 +1,5 @@
 #!/bin/bash
-# rm-container.sh — stop and remove a Claude dev container
+# rm-container.sh — stop and remove a Agent dev container
 # Usage:
 #   ./rm-container.sh              # lists running containers
 #   ./rm-container.sh <name>       # removes claude-dev-<name>

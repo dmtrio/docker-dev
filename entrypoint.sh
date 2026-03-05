@@ -4,7 +4,7 @@ set -e
 CONTAINER_NAME="${CONTAINER_NAME:-unnamed}"
 
 echo "╔══════════════════════════════════════════╗"
-echo "║        Claude Code Dev Container         ║"
+echo "║        Agent Dev Container         ║"
 echo "║        ${CONTAINER_NAME}                 ║"
 echo "╚══════════════════════════════════════════╝"
 

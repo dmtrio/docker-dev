@@ -1,6 +1,6 @@
-# Claude Code Dev Container
+# Agent Dev Container
 
-Isolated Docker environments for Claude Code on Unraid. One container per project, each appearing as a real host on your VLAN (`192.168.35.81–90`). SSH in from your MacBook, use VS Code Remote SSH, and access dev servers directly by IP.
+Isolated Docker environments for AI-assisted development on Unraid. One container per project, each appearing as a real host on your VLAN (`192.168.35.81–90`). SSH in from your MacBook, use VS Code Remote SSH, and access dev servers directly by IP.
 
 ## How it works
 
@@ -8,7 +8,7 @@ Each container gets:
 - A name you choose (e.g. `my-api`) used as Docker container name and SSH hostname
 - A static VLAN IP from the `192.168.35.81–90` pool via macvlan on `br0`
 - An isolated `/workspace` mounted from `/mnt/user/docker-dev/<name>`
-- Claude Code + GitHub CLI + Gitea CLI (tea) + fnm + pipenv
+- Claude Code, GitHub CLI, Gitea CLI (tea), fnm, pipenv
 
 Shared auth (Claude, GitHub/Gitea) lives under `/mnt/user/docker-dev/` and is mounted into whichever containers need it.
 

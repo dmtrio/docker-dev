@@ -68,7 +68,7 @@ RUN mkdir -p /home/$USERNAME/.ssh \
 # ── fnm (Fast Node Manager) ───────────────────────────────────────────────────
 USER $USERNAME
 
-RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir /home/$USERNAME/.fnm --no-use
+RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir /home/$USERNAME/.fnm
 
 # Add fnm to bash profile so it works in interactive AND non-interactive shells
 RUN echo '' >> /home/$USERNAME/.bashrc \
@@ -81,10 +81,10 @@ RUN echo '' >> /home/$USERNAME/.bashrc \
 
 # Install a default LTS node (projects can override via .node-version)
 ENV PATH="/home/coder/.fnm:$PATH"
-RUN fnm install --lts && fnm use lts-latest
+RUN eval "$(fnm env)" && fnm install --lts && fnm use lts-latest
 
 # ── Claude Code CLI ───────────────────────────────────────────────────────────
-RUN bash -c 'source /home/$USERNAME/.bashrc && npm install -g @anthropic-ai/claude-code'
+RUN eval "$(fnm env)" && npm install -g @anthropic-ai/claude-code
 
 # ── Workspace ─────────────────────────────────────────────────────────────────
 RUN sudo mkdir -p /workspace && sudo chown $USERNAME:$USERNAME /workspace

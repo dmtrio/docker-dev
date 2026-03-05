@@ -1,6 +1,6 @@
 #!/bin/bash
 # new-container.sh
-# Spins up a new Claude Code dev container on the macvlan network.
+# Spins up a new Agent dev container on the macvlan network.
 #
 # Usage: ./new-container.sh
 
