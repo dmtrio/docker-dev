@@ -1,5 +1,5 @@
 #!/bin/bash
-# rm-container.sh — stop and remove a Agent dev container
+# rm-container.sh — stop and remove an Agent dev container
 # Usage:
 #   ./rm-container.sh              # lists running containers
 #   ./rm-container.sh <name>       # removes dev-agent-<name>
@@ -33,5 +33,5 @@ docker stop "$CONTAINER" 2>/dev/null || true
 docker rm "$CONTAINER"
 
 echo "Removed $CONTAINER"
-echo "Shared data (claude-auth, gh-auth, vscode-server) is preserved on disk."
+echo "Shared data (shared/claude, shared/gh, shared/gitea) is preserved on disk."
 echo "Remove the Host entry from ~/.ssh/config manually if needed."

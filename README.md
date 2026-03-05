@@ -8,10 +8,11 @@ Each container gets:
 
 - A name you choose (e.g. `my-api`) used as Docker container name and SSH hostname
 - A static VLAN IP from the `192.168.35.81–90` pool via macvlan on `br0`
-- An isolated `/workspace` mounted from `/mnt/user/docker-dev/<name>`
-- Claude Code, GitHub CLI, Gitea CLI (tea), fnm, pipenv
+- An isolated `/workspace` mounted from `/mnt/user/docker-dev/workspaces/<name>`
+- AI tools (toggleable): Claude Code, Aider, Gemini CLI
+- Dev tools: GitHub CLI, Gitea CLI (tea), fnm, pipenv, Playwright
 
-Shared auth (Claude, GitHub/Gitea) lives under `/mnt/user/docker-dev/` and is mounted into whichever containers need it.
+Shared auth (Claude, GitHub/Gitea) and MCP config live under `/mnt/user/docker-dev/shared/` and are mounted into whichever containers need them.
 
 ---
 
@@ -43,10 +44,12 @@ chmod +x new-container.sh rm-container.sh
 Prompts for:
 
 1. **Container name** — e.g. `my-api`
-2. **Project path** — defaults to `/mnt/user/docker-dev/<name>`
+2. **Project path** — defaults to `/mnt/user/docker-dev/workspaces/<name>`
 3. **IP** — auto-suggests the next free IP on `br0`
-4. **Git identity** — name and email for commits (per container)
-5. **Git forge** — GitHub or Gitea (determines which shared auth dir is mounted)
+4. **Git forge** — GitHub or Gitea (determines which shared auth dir is mounted)
+5. **Git identity** — name and email for commits (per container)
+6. **AI tools** — Claude Code, Aider, Gemini CLI (each toggleable, default yes)
+7. **Docker icon** — URL or local path for Unraid dashboard (optional)
 
 Prints an SSH config block to paste into `~/.ssh/config` on your Mac.
 
@@ -91,6 +94,30 @@ tea login add
 
 ---
 
+## MCP Config
+
+Shared MCP server config lives at `/mnt/user/docker-dev/shared/mcp.json`. It's mounted read-only into every container and symlinked to `/workspace/.mcp.json` at startup.
+
+Edit it from the Unraid terminal to add MCP servers (e.g. Browserless):
+
+```json
+{
+  "mcpServers": {
+    "browser": {
+      "command": "npx",
+      "args": ["playwright-browserless-mcp"],
+      "env": {
+        "BROWSERLESS_URL": "ws://192.168.35.90:3000?token=yourtoken"
+      }
+    }
+  }
+}
+```
+
+Restart Claude (`/exit` then `claude`) to pick up changes.
+
+---
+
 ## Accessing Dev Servers
 
 ```
@@ -121,7 +148,8 @@ docker logs -f dev-agent-my-api   # view logs
 ├── shared/
 │   ├── claude/           <- shared, ~/.claude
 │   ├── gh/               <- shared, ~/.config/gh (GitHub)
-│   └── gitea/            <- shared, ~/.config/tea (Gitea)
+│   ├── gitea/            <- shared, ~/.config/tea (Gitea)
+│   └── mcp.json          <- shared MCP config (read-only)
 └── workspaces/
     ├── my-api/           <- workspace for container "my-api"
     └── personal-site/    <- workspace for container "personal-site"

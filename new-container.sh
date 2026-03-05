@@ -122,6 +122,7 @@ fi
 
 # ── Ensure shared dirs exist ──────────────────────────────────────────────────
 mkdir -p "$SHARED_PATH/claude" "$FORGE_AUTH_PATH"
+touch "$SHARED_PATH/mcp.json"
 
 # ── Launch ────────────────────────────────────────────────────────────────────
 echo ""

@@ -18,6 +18,11 @@ if [ -n "$GIT_USER_EMAIL" ]; then
     echo "✓ Git user.email: $GIT_USER_EMAIL"
 fi
 
+# ── MCP config ───────────────────────────────────────────────────────────────
+if [ -f /home/coder/.mcp.json ]; then
+    ln -sf /home/coder/.mcp.json /workspace/.mcp.json
+fi
+
 # ── Git safe directory ────────────────────────────────────────────────────────
 su -c "git config --global safe.directory /workspace" coder
 

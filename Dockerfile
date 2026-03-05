@@ -28,8 +28,10 @@ RUN apt-get update && apt-get install -y \
     ca-certificates gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# ── pipenv ────────────────────────────────────────────────────────────────────
-RUN pip3 install pipenv --break-system-packages
+# ── Python packages ──────────────────────────────────────────────────────────
+# --break-system-packages: Ubuntu 24.04 marks Python as externally managed
+# (PEP 668). Safe to override here — the container is the isolation layer.
+RUN pip3 install pipenv playwright --break-system-packages
 
 # ── GitHub CLI ────────────────────────────────────────────────────────────────
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
