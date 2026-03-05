@@ -8,6 +8,9 @@ ARG USERNAME=coder
 ARG USER_UID=1000
 ARG USER_GID=1000
 ARG AUTHORIZED_KEY=""
+ARG INSTALL_CLAUDE="true"
+ARG INSTALL_AIDER="true"
+ARG INSTALL_GEMINI="true"
 
 # ── System packages ───────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
@@ -83,8 +86,18 @@ RUN echo '' >> /home/$USERNAME/.bashrc \
 ENV PATH="/home/coder/.fnm:$PATH"
 RUN eval "$(fnm env)" && fnm install --lts && fnm use lts-latest
 
-# ── Claude Code CLI ───────────────────────────────────────────────────────────
-RUN eval "$(fnm env)" && npm install -g @anthropic-ai/claude-code
+# ── AI tools (toggled via build args) ────────────────────────────────────────
+RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
+        eval "$(fnm env)" && npm install -g @anthropic-ai/claude-code; \
+    fi
+
+RUN if [ "$INSTALL_AIDER" = "true" ]; then \
+        pip3 install aider-chat --break-system-packages; \
+    fi
+
+RUN if [ "$INSTALL_GEMINI" = "true" ]; then \
+        eval "$(fnm env)" && npm install -g @google/gemini-cli; \
+    fi
 
 # ── Workspace ─────────────────────────────────────────────────────────────────
 RUN sudo mkdir -p /workspace && sudo chown $USERNAME:$USERNAME /workspace

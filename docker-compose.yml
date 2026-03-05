@@ -12,6 +12,9 @@ services:
         USER_UID: 1000
         USER_GID: 1000
         AUTHORIZED_KEY: "${AUTHORIZED_KEY}"
+        INSTALL_CLAUDE: "${INSTALL_CLAUDE:-true}"
+        INSTALL_AIDER: "${INSTALL_AIDER:-true}"
+        INSTALL_GEMINI: "${INSTALL_GEMINI:-true}"
 
     container_name: agent-dev-${CONTAINER_NAME}
     hostname: ${CONTAINER_NAME}
