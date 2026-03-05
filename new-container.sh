@@ -31,8 +31,8 @@ if [ -z "$CONTAINER_NAME" ]; then
     exit 1
 fi
 
-if docker ps -a --format '{{.Names}}' | grep -q "^claude-dev-$CONTAINER_NAME$"; then
-    echo "Error: container 'claude-dev-$CONTAINER_NAME' already exists"
+if docker ps -a --format '{{.Names}}' | grep -q "^agent-dev-$CONTAINER_NAME$"; then
+    echo "Error: container 'agent-dev-$CONTAINER_NAME' already exists"
     exit 1
 fi
 
@@ -122,7 +122,7 @@ docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --build
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Container:  claude-dev-$CONTAINER_NAME"
+echo "  Container:  agent-dev-$CONTAINER_NAME"
 echo "  IP:         $CONTAINER_IP"
 echo "  Project:    $PROJECT_PATH"
 echo "  Forge:      $FORGE"

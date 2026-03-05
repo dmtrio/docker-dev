@@ -5,6 +5,7 @@ Isolated Docker environments for AI-assisted development on Unraid. One containe
 ## How it works
 
 Each container gets:
+
 - A name you choose (e.g. `my-api`) used as Docker container name and SSH hostname
 - A static VLAN IP from the `192.168.35.81–90` pool via macvlan on `br0`
 - An isolated `/workspace` mounted from `/mnt/user/docker-dev/<name>`
@@ -40,6 +41,7 @@ chmod +x new-container.sh rm-container.sh
 ```
 
 Prompts for:
+
 1. **Container name** — e.g. `my-api`
 2. **Project path** — defaults to `/mnt/user/docker-dev/<name>`
 3. **IP** — auto-suggests the next free IP on `br0`
@@ -53,6 +55,7 @@ Prints an SSH config block to paste into `~/.ssh/config` on your Mac.
 ## Connecting from MacBook
 
 Add the printed block to `~/.ssh/config`:
+
 ```
 Host my-api
     HostName 192.168.35.81
@@ -61,6 +64,7 @@ Host my-api
 ```
 
 Then:
+
 ```bash
 ssh my-api
 
@@ -103,8 +107,8 @@ No port forwarding needed — macvlan makes each container a real VLAN host.
 ```bash
 ./rm-container.sh              # list all containers
 ./rm-container.sh my-api       # remove container (shared auth preserved on disk)
-docker restart claude-dev-my-api   # restart a container
-docker logs -f claude-dev-my-api   # view logs
+docker restart agent-dev-my-api   # restart a container
+docker logs -f agent-dev-my-api   # view logs
 ```
 
 ---
