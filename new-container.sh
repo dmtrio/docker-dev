@@ -9,7 +9,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
 
-SHARED_PATH="/mnt/user/docker-dev"
+BASE_PATH="/mnt/user/docker-dev"
+SHARED_PATH="$BASE_PATH/shared"
+WORKSPACES_PATH="$BASE_PATH/workspaces"
 IP_PREFIX="192.168.35"
 IP_POOL_START=81
 IP_POOL_END=90
@@ -37,7 +39,7 @@ if docker ps -a --format '{{.Names}}' | grep -q "^agent-dev-$CONTAINER_NAME$"; t
 fi
 
 # ── Project path ──────────────────────────────────────────────────────────────
-DEFAULT_PATH="$SHARED_PATH/$CONTAINER_NAME"
+DEFAULT_PATH="$WORKSPACES_PATH/$CONTAINER_NAME"
 read -p "Project path [$DEFAULT_PATH]: " PROJECT_PATH
 PROJECT_PATH="${PROJECT_PATH:-$DEFAULT_PATH}"
 
@@ -83,12 +85,12 @@ read -p "Choose [1]: " FORGE_CHOICE
 case "${FORGE_CHOICE:-1}" in
     1)
         FORGE="github"
-        FORGE_AUTH_PATH="$SHARED_PATH/gh-auth"
+        FORGE_AUTH_PATH="$SHARED_PATH/gh"
         FORGE_AUTH_MOUNT="/home/coder/.config/gh"
         ;;
     2)
         FORGE="gitea"
-        FORGE_AUTH_PATH="$SHARED_PATH/gitea-auth"
+        FORGE_AUTH_PATH="$SHARED_PATH/gitea"
         FORGE_AUTH_MOUNT="/home/coder/.config/tea"
         ;;
     *)
@@ -112,11 +114,11 @@ INSTALL_AIDER=$([[ "${INSTALL_AIDER:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "t
 INSTALL_GEMINI=$([[ "${INSTALL_GEMINI:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "true")
 
 # ── Ensure shared dirs exist ──────────────────────────────────────────────────
-mkdir -p "$SHARED_PATH/claude-auth" "$FORGE_AUTH_PATH"
+mkdir -p "$SHARED_PATH/claude" "$FORGE_AUTH_PATH"
 
 # ── Launch ────────────────────────────────────────────────────────────────────
 echo ""
-echo "Spinning up claude-dev-$CONTAINER_NAME ($CONTAINER_IP)..."
+echo "Spinning up agent-dev-$CONTAINER_NAME ($CONTAINER_IP)..."
 
 AUTHORIZED_KEY="$AUTHORIZED_KEY" \
 CONTAINER_NAME="$CONTAINER_NAME" \

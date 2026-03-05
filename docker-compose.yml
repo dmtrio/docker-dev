@@ -31,8 +31,8 @@ services:
       # ── Project workspace ──────────────────────────────────────────────────
       - ${PROJECT_PATH}:/workspace
 
-      # ── Shared across all containers (siblings under SHARED_PATH) ─────────
-      - ${SHARED_PATH}/claude-auth:/home/coder/.claude
+      # ── Shared across all containers ──────────────────────────────────────
+      - ${SHARED_PATH}/claude:/home/coder/.claude
       - ${FORGE_AUTH_PATH}:${FORGE_AUTH_MOUNT}
 
     networks:

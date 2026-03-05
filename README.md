@@ -118,9 +118,11 @@ docker logs -f agent-dev-my-api   # view logs
 ```
 /mnt/user/docker-dev/
 ├── new-container.sh, rm-container.sh, ...   <- scripts
-├── claude-auth/          <- shared, ~/.claude
-├── gh-auth/              <- shared, ~/.config/gh (GitHub)
-├── gitea-auth/           <- shared, ~/.config/tea (Gitea)
-├── my-api/               <- workspace for container "my-api"
-└── personal-site/        <- workspace for container "personal-site"
+├── shared/
+│   ├── claude/           <- shared, ~/.claude
+│   ├── gh/               <- shared, ~/.config/gh (GitHub)
+│   └── gitea/            <- shared, ~/.config/tea (Gitea)
+└── workspaces/
+    ├── my-api/           <- workspace for container "my-api"
+    └── personal-site/    <- workspace for container "personal-site"
 ```
