@@ -30,7 +30,7 @@ services:
 
       # ── Shared across all containers (siblings under SHARED_PATH) ─────────
       - ${SHARED_PATH}/claude-auth:/home/coder/.claude
-      - ${SHARED_PATH}/gh-auth:/home/coder/.config/gh
+      - ${FORGE_AUTH_PATH}:${FORGE_AUTH_MOUNT}
 
     networks:
       br0:

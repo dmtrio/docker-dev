@@ -1,80 +1,70 @@
 # Claude Code Dev Container
 
-Isolated, reproducible Docker environments for Claude Code. One container per project, each appearing as a real host on your VLAN (`192.168.35.80–90`). SSH in from your MacBook with local VS Code Remote SSH. Dev servers are directly accessible by IP. Code never touches `main` — Claude pushes branches, you review PRs.
+Isolated Docker environments for Claude Code on Unraid. One container per project, each appearing as a real host on your VLAN (`192.168.35.81–90`). SSH in from your MacBook, use VS Code Remote SSH, and access dev servers directly by IP.
 
 ## How it works
 
 Each container gets:
-- A name you choose (e.g. `personal-site`) used as both the Docker container name and SSH hostname
-- A static VLAN IP from the `192.168.35.80–90` pool via macvlan on `br0`
-- An isolated `/workspace` mounted from your Unraid project subdirectory
-- Full Claude Code + GitHub CLI + fnm + pipenv inside
+- A name you choose (e.g. `my-api`) used as Docker container name and SSH hostname
+- A static VLAN IP from the `192.168.35.81–90` pool via macvlan on `br0`
+- An isolated `/workspace` mounted from `/mnt/user/docker-dev/<name>`
+- Claude Code + GitHub CLI + Gitea CLI (tea) + fnm + pipenv
 
-Your MacBook SSHes directly to the container IP — no port mapping, no tunnels on the local network. Any dev server Claude starts (Vite, Next, Express, etc.) is reachable at `http://192.168.35.8x:<port>` from your Mac immediately.
+Shared auth (Claude, GitHub/Gitea) lives under `/mnt/user/docker-dev/` and is mounted into whichever containers need it.
 
 ---
 
 ## Prerequisites
 
 - Docker + Docker Compose on Unraid
-- `br0` as the Unraid bridge interface (verify with `ip link show`)
-- IPs `192.168.35.80–90` reserved and outside your DHCP pool
+- `br0` macvlan network already created in Docker
+- IPs `192.168.35.81–90` reserved and outside your DHCP pool
 - Your SSH public key (`~/.ssh/id_ed25519.pub`)
-- Unraid projects share at `/mnt/user/dev/`
 
 ---
 
 ## First-time Setup
 
-### 1. Configure
 ```bash
 cp .env.example .env
-# Fill in: AUTHORIZED_KEY, GIT_USER_NAME, GIT_USER_EMAIL
+# Fill in: AUTHORIZED_KEY
+chmod +x new-container.sh rm-container.sh
 ```
-
-### 2. Bootstrap shared network and volumes (once)
-```bash
-chmod +x bootstrap.sh new-container.sh rm-container.sh list-containers.sh
-./bootstrap.sh
-```
-
-Creates:
-- `claude-macvlan` Docker network (macvlan on `br0`, `192.168.35.0/24`)
-- Shared volumes: `claude-auth`, `gh-auth`, `claude-vscode-server`
 
 ---
 
 ## Spinning Up a Container
 
 ```bash
-./new-container.sh --name personal-site --path /mnt/user/dev/personal-site
-```
-
-Or interactively:
-```bash
 ./new-container.sh
 ```
 
-The script assigns the next available IP, starts the container, and prints the SSH config block to add on your MacBook.
+Prompts for:
+1. **Container name** — e.g. `my-api`
+2. **Project path** — defaults to `/mnt/user/docker-dev/<name>`
+3. **IP** — auto-suggests the next free IP on `br0`
+4. **Git identity** — name and email for commits (per container)
+5. **Git forge** — GitHub or Gitea (determines which shared auth dir is mounted)
 
-### Add to MacBook ~/.ssh/config
-
-```
-Host personal-site
-    HostName 192.168.35.80
-    User coder
-    StrictHostKeyChecking no
-```
+Prints an SSH config block to paste into `~/.ssh/config` on your Mac.
 
 ---
 
 ## Connecting from MacBook
 
-```bash
-ssh personal-site
+Add the printed block to `~/.ssh/config`:
+```
+Host my-api
+    HostName 192.168.35.81
+    User coder
+    StrictHostKeyChecking no
+```
 
-# VS Code Remote SSH
-# Ctrl+Shift+P → "Remote-SSH: Connect to Host" → personal-site
+Then:
+```bash
+ssh my-api
+
+# VS Code: Remote-SSH → Connect to Host → my-api
 # Open folder: /workspace
 ```
 
@@ -83,46 +73,16 @@ ssh personal-site
 ## First Time in a Container
 
 ```bash
-ssh personal-site
+ssh my-api
 
-# Auth Claude (once — stored in shared volume)
+# Auth Claude (once — stored in shared dir)
 claude
 
-# Auth GitHub (once — stored in shared volume)
+# Auth GitHub (once — stored in shared dir)
 gh auth login
-# PAT permissions: Contents (read/write) + Pull Requests (read/write)
-# Do NOT grant merge or admin permissions
-```
 
----
-
-## Using Claude Code
-
-```bash
-ssh personal-site
-cd /workspace
-
-# Interactive
-claude
-
-# Fire-and-forget
-claude --dangerously-skip-permissions -p "scaffold a Next.js app with Tailwind"
-```
-
-### Recommended CLAUDE.md
-
-Add `/workspace/CLAUDE.md` to each project:
-```markdown
-# Project Context
-
-## What this is
-[Brief description]
-
-## Rules
-- Always work on a feature branch, never commit to main
-- After completing work, update claude-progress.txt
-- Use conventional commits (feat:, fix:, chore:)
-- When done: gh pr create --title "..." --body "..."
+# Or auth Gitea
+tea login add
 ```
 
 ---
@@ -130,8 +90,8 @@ Add `/workspace/CLAUDE.md` to each project:
 ## Accessing Dev Servers
 
 ```
-http://192.168.35.80:3000   ← Next.js dev server
-http://192.168.35.81:8080   ← Express API
+http://192.168.35.81:3000   <- Next.js dev server
+http://192.168.35.81:8080   <- Express API
 ```
 
 No port forwarding needed — macvlan makes each container a real VLAN host.
@@ -141,30 +101,22 @@ No port forwarding needed — macvlan makes each container a real VLAN host.
 ## Managing Containers
 
 ```bash
-./list-containers.sh          # show all containers + status
-./rm-container.sh personal-site   # remove container (keeps shared auth volumes)
+./rm-container.sh              # list all containers
+./rm-container.sh my-api       # remove container (shared auth preserved on disk)
+docker restart claude-dev-my-api   # restart a container
+docker logs -f claude-dev-my-api   # view logs
 ```
 
 ---
 
-## Volume Reference
-
-| Volume | Scope | Contents |
-|--------|-------|----------|
-| `claude-auth` | Shared | Claude Code auth + skills |
-| `gh-auth` | Shared | GitHub CLI auth |
-| `claude-vscode-server` | Shared | VS Code server + extensions |
-| `claude-dev-{name}-npm` | Per container | npm globals |
-| `claude-dev-{name}-ssh-host-keys` | Per container | SSH host keys |
-
----
-
-## GitHub Workflow
+## Directory Layout
 
 ```
-Claude:  git checkout -b feature/x
-Claude:  [writes code, commits]
-Claude:  gh pr create
-You:     review + merge on GitHub
-         main never touched until you approve
+/mnt/user/docker-dev/
+├── new-container.sh, rm-container.sh, ...   <- scripts
+├── claude-auth/          <- shared, ~/.claude
+├── gh-auth/              <- shared, ~/.config/gh (GitHub)
+├── gitea-auth/           <- shared, ~/.config/tea (Gitea)
+├── my-api/               <- workspace for container "my-api"
+└── personal-site/        <- workspace for container "personal-site"
 ```

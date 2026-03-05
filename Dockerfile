@@ -19,14 +19,14 @@ RUN apt-get update && apt-get install -y \
     build-essential pkg-config \
     # Python
     python3 python3-pip python3-venv \
-
-# ── pipenv ────────────────────────────────────────────────────────────────────
-RUN pip3 install pipenv --break-system-packages
     # Search / file tools
     ripgrep fd-find jq unzip zip \
     # GitHub CLI deps
     ca-certificates gnupg \
     && rm -rf /var/lib/apt/lists/*
+
+# ── pipenv ────────────────────────────────────────────────────────────────────
+RUN pip3 install pipenv --break-system-packages
 
 # ── GitHub CLI ────────────────────────────────────────────────────────────────
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -37,8 +37,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
+# ── Gitea CLI (tea) ──────────────────────────────────────────────────────────
+RUN curl -fsSL "https://dl.gitea.com/tea/0.9.2/tea-0.9.2-linux-amd64" -o /usr/local/bin/tea \
+    && chmod +x /usr/local/bin/tea
+
 # ── Create non-root user ──────────────────────────────────────────────────────
-RUN groupadd --gid $USER_GID $USERNAME \
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && groupadd --gid $USER_GID $USERNAME 2>/dev/null || true \
     && useradd --uid $USER_UID --gid $USER_GID -m -s /bin/bash $USERNAME \
     && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
