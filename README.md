@@ -107,8 +107,8 @@ No port forwarding needed — macvlan makes each container a real VLAN host.
 ```bash
 ./rm-container.sh              # list all containers
 ./rm-container.sh my-api       # remove container (shared auth preserved on disk)
-docker restart agent-dev-my-api   # restart a container
-docker logs -f agent-dev-my-api   # view logs
+docker restart dev-agent-my-api   # restart a container
+docker logs -f dev-agent-my-api   # view logs
 ```
 
 ---

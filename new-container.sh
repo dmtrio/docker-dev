@@ -33,8 +33,8 @@ if [ -z "$CONTAINER_NAME" ]; then
     exit 1
 fi
 
-if docker ps -a --format '{{.Names}}' | grep -q "^agent-dev-$CONTAINER_NAME$"; then
-    echo "Error: container 'agent-dev-$CONTAINER_NAME' already exists"
+if docker ps -a --format '{{.Names}}' | grep -q "^dev-agent-$CONTAINER_NAME$"; then
+    echo "Error: container 'dev-agent-$CONTAINER_NAME' already exists"
     exit 1
 fi
 
@@ -118,7 +118,7 @@ mkdir -p "$SHARED_PATH/claude" "$FORGE_AUTH_PATH"
 
 # ── Launch ────────────────────────────────────────────────────────────────────
 echo ""
-echo "Spinning up agent-dev-$CONTAINER_NAME ($CONTAINER_IP)..."
+echo "Spinning up dev-agent-$CONTAINER_NAME ($CONTAINER_IP)..."
 
 AUTHORIZED_KEY="$AUTHORIZED_KEY" \
 CONTAINER_NAME="$CONTAINER_NAME" \
@@ -132,12 +132,12 @@ GIT_USER_EMAIL="$GIT_USER_EMAIL" \
 INSTALL_CLAUDE="$INSTALL_CLAUDE" \
 INSTALL_AIDER="$INSTALL_AIDER" \
 INSTALL_GEMINI="$INSTALL_GEMINI" \
-docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --build
+docker compose -p "dev-agent-$CONTAINER_NAME" -f "$SCRIPT_DIR/docker-compose.yml" up -d --build
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Container:  agent-dev-$CONTAINER_NAME"
+echo "  Container:  dev-agent-$CONTAINER_NAME"
 echo "  IP:         $CONTAINER_IP"
 echo "  Project:    $PROJECT_PATH"
 echo "  Forge:      $FORGE"

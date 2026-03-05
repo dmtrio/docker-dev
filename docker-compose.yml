@@ -3,7 +3,7 @@
 # Launched via new-container.sh — don't run directly.
 
 services:
-  agent-dev:
+  dev-agent:
     build:
       context: .
       dockerfile: Dockerfile
@@ -16,7 +16,7 @@ services:
         INSTALL_AIDER: "${INSTALL_AIDER:-true}"
         INSTALL_GEMINI: "${INSTALL_GEMINI:-true}"
 
-    container_name: agent-dev-${CONTAINER_NAME}
+    container_name: dev-agent-${CONTAINER_NAME}
     hostname: ${CONTAINER_NAME}
 
     restart: unless-stopped

@@ -32,7 +32,7 @@ fi
 CONTAINER_IP=$(hostname -I | awk '{print $1}')
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Container:  agent-dev-${CONTAINER_NAME}"
+echo "  Container:  dev-agent-${CONTAINER_NAME}"
 echo "  Hostname:   ${CONTAINER_NAME}"
 echo "  IP:         ${CONTAINER_IP}"
 echo ""

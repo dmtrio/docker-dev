@@ -2,7 +2,7 @@
 # rm-container.sh — stop and remove a Agent dev container
 # Usage:
 #   ./rm-container.sh              # lists running containers
-#   ./rm-container.sh <name>       # removes agent-dev-<name>
+#   ./rm-container.sh <name>       # removes dev-agent-<name>
 
 set -e
 
@@ -13,13 +13,13 @@ if [ -z "$NAME" ] || [ "$NAME" = "list" ]; then
     echo ""
     echo "  Agent Dev Containers"
     echo "  ─────────────────────────────────────────────────────────"
-    docker ps -a --filter "name=agent-dev-" \
+    docker ps -a --filter "name=dev-agent-" \
         --format "  {{.Names}}\t{{.Status}}" 2>/dev/null || echo "  (none)"
     echo ""
     exit 0
 fi
 
-CONTAINER="agent-dev-$NAME"
+CONTAINER="dev-agent-$NAME"
 
 if ! docker inspect "$CONTAINER" &>/dev/null; then
     echo "Error: container '$CONTAINER' not found"
