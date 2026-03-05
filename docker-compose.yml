@@ -19,6 +19,9 @@ services:
     container_name: dev-agent-${CONTAINER_NAME}
     hostname: ${CONTAINER_NAME}
 
+    labels:
+      net.unraid.docker.icon: "${DOCKER_ICON:-}"
+
     restart: unless-stopped
 
     environment:

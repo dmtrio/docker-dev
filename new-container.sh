@@ -113,6 +113,13 @@ INSTALL_CLAUDE=$([[ "${INSTALL_CLAUDE:-y}" =~ ^[Nn]$ ]] && echo "false" || echo 
 INSTALL_AIDER=$([[ "${INSTALL_AIDER:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "true")
 INSTALL_GEMINI=$([[ "${INSTALL_GEMINI:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "true")
 
+# ── Docker icon (for Unraid dashboard) ────────────────────────────────────────
+read -p "Docker icon (URL or local path, blank to skip): " DOCKER_ICON
+if [[ -n "$DOCKER_ICON" && "$DOCKER_ICON" != http* ]]; then
+    # Convert local path to Unraid web URL
+    DOCKER_ICON="http://localhost${DOCKER_ICON}"
+fi
+
 # ── Ensure shared dirs exist ──────────────────────────────────────────────────
 mkdir -p "$SHARED_PATH/claude" "$FORGE_AUTH_PATH"
 
@@ -132,6 +139,7 @@ GIT_USER_EMAIL="$GIT_USER_EMAIL" \
 INSTALL_CLAUDE="$INSTALL_CLAUDE" \
 INSTALL_AIDER="$INSTALL_AIDER" \
 INSTALL_GEMINI="$INSTALL_GEMINI" \
+DOCKER_ICON="$DOCKER_ICON" \
 docker compose -p "dev-agent-$CONTAINER_NAME" -f "$SCRIPT_DIR/docker-compose.yml" up -d --build
 
 # ── Done ──────────────────────────────────────────────────────────────────────
