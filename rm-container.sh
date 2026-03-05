@@ -1,69 +1,37 @@
 #!/bin/bash
-# list-containers.sh / rm-container.sh
+# rm-container.sh — stop and remove a Claude dev container
 # Usage:
-#   ./list-containers.sh
-#   ./rm-container.sh personal-site
+#   ./rm-container.sh              # lists running containers
+#   ./rm-container.sh <name>       # removes claude-dev-<name>
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IP_REGISTRY="$SCRIPT_DIR/.ip-registry"
-SSH_CONFIG="$HOME/.ssh/config"
-CMD=$(basename "$0" .sh)
+NAME="${1:-}"
 
-# ── list ──────────────────────────────────────────────────────────────────────
-if [[ "$CMD" == "list-containers" ]] || [[ "$1" == "list" ]]; then
+# ── List ──────────────────────────────────────────────────────────────────────
+if [ -z "$NAME" ] || [ "$NAME" = "list" ]; then
     echo ""
     echo "  Claude Dev Containers"
     echo "  ─────────────────────────────────────────────────────────"
-    printf "  %-20s %-16s %s\n" "NAME" "IP" "PROJECT PATH"
-    echo "  ─────────────────────────────────────────────────────────"
-
-    if [ ! -s "$IP_REGISTRY" ]; then
-        echo "  (none)"
-    else
-        while read -r name ip path; do
-            STATUS=$(docker inspect --format='{{.State.Status}}' "claude-dev-$name" 2>/dev/null || echo "gone")
-            printf "  %-20s %-16s %s  [%s]\n" "$name" "$ip" "$path" "$STATUS"
-        done < "$IP_REGISTRY"
-    fi
+    docker ps -a --filter "name=claude-dev-" \
+        --format "  {{.Names}}\t{{.Status}}" 2>/dev/null || echo "  (none)"
     echo ""
     exit 0
 fi
 
-# ── remove ────────────────────────────────────────────────────────────────────
-NAME="${1:-}"
-if [ -z "$NAME" ]; then
-    echo "Usage: ./rm-container.sh <name>"
-    echo "       ./list-containers.sh  (to see existing containers)"
+CONTAINER="claude-dev-$NAME"
+
+if ! docker inspect "$CONTAINER" &>/dev/null; then
+    echo "Error: container '$CONTAINER' not found"
     exit 1
 fi
 
-CONTAINER_DIR="$SCRIPT_DIR/instances/$NAME"
+read -p "Remove $CONTAINER? [y/N] " confirm
+if [[ ! "$confirm" =~ ^[Yy]$ ]]; then echo "Aborted."; exit 0; fi
 
-if [ ! -d "$CONTAINER_DIR" ]; then
-    echo "Error: No container found with name '$NAME'"
-    exit 1
-fi
+docker stop "$CONTAINER" 2>/dev/null || true
+docker rm "$CONTAINER"
 
-read -p "Remove claude-dev-$NAME and its per-container volumes? [y/N] " confirm
-if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    echo "Aborted."
-    exit 0
-fi
-
-# Stop and remove container + per-container volumes
-cd "$CONTAINER_DIR"
-docker compose --env-file .env down -v 2>/dev/null || true
-
-# Remove instance directory
-rm -rf "$CONTAINER_DIR"
-
-# Remove from IP registry
-sed -i "/^$NAME /d" "$IP_REGISTRY"
-
-# Remove SSH config entry
-sed -i "/^# claude-dev-$NAME$/,/^$/d" "$SSH_CONFIG"
-
-echo "✓ Removed claude-dev-$NAME"
-echo "  Note: Shared volumes (claude-auth, gh-auth, claude-vscode-server) are preserved."
+echo "Removed $CONTAINER"
+echo "Shared data (claude-auth, gh-auth, vscode-server) is preserved on disk."
+echo "Remove the Host entry from ~/.ssh/config manually if needed."

@@ -1,10 +1,6 @@
 # docker-compose.yml
-#
 # Template for a single Claude Code dev container.
-# Use new-container.sh to spin up named instances — don't edit this directly.
-#
-# Manual usage:
-#   CONTAINER_NAME=personal-site CONTAINER_IP=192.168.35.80 docker compose up -d
+# Launched via new-container.sh — don't run directly.
 
 services:
   claude-dev:
@@ -13,7 +9,7 @@ services:
       dockerfile: Dockerfile
       args:
         USERNAME: coder
-        USER_UID: 1000        # Match your Unraid user: run `id` on host
+        USER_UID: 1000
         USER_GID: 1000
         AUTHORIZED_KEY: "${AUTHORIZED_KEY}"
 
@@ -24,52 +20,25 @@ services:
 
     environment:
       - CONTAINER_NAME=${CONTAINER_NAME}
-      - GIT_USER_NAME=${GIT_USER_NAME:-Demetrio}
+      - GIT_USER_NAME=${GIT_USER_NAME:-}
       - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
       - TZ=America/Chicago
 
     volumes:
-      # ── Project workspace ─────────────────────────────────────────────────
-      - ${PROJECT_PATH:-/mnt/user/dev/default}:/workspace
+      # ── Project workspace ──────────────────────────────────────────────────
+      - ${PROJECT_PATH}:/workspace
 
-      # ── Shared across all containers ──────────────────────────────────────
-      - claude-auth:/home/coder/.claude
-      - gh-auth:/home/coder/.config/gh
-      - vscode-server:/home/coder/.vscode-server
-
-      # ── Per container ─────────────────────────────────────────────────────
-      - claude-dev-${CONTAINER_NAME}-npm:/home/coder/.npm
-      - claude-dev-${CONTAINER_NAME}-ssh-host-keys:/etc/ssh/ssh_host_keys
+      # ── Shared across all containers (siblings under SHARED_PATH) ─────────
+      - ${SHARED_PATH}/claude-auth:/home/coder/.claude
+      - ${SHARED_PATH}/gh-auth:/home/coder/.config/gh
 
     networks:
-      claude-macvlan:
+      br0:
         ipv4_address: ${CONTAINER_IP}
 
     mem_limit: 2g
     memswap_limit: 2g
 
-    # No port mapping needed — containers are real hosts on the VLAN.
-    # SSH on port 22, dev servers on whatever port the app uses.
-
-# ── Shared named volumes ──────────────────────────────────────────────────────
-volumes:
-  claude-auth:
-    name: claude-auth
-    external: true
-
-  gh-auth:
-    name: gh-auth
-    external: true
-
-  vscode-server:
-    name: claude-vscode-server
-    external: true
-
-  claude-dev-${CONTAINER_NAME}-npm:
-  claude-dev-${CONTAINER_NAME}-ssh-host-keys:
-
-# ── macvlan network ───────────────────────────────────────────────────────────
 networks:
-  claude-macvlan:
-    name: claude-macvlan
-    external: true    # Created once by bootstrap.sh
+  br0:
+    external: true
