@@ -1,0 +1,63 @@
+# docker-compose.local.yml
+# Template for a single local Agent dev container (RFC 03: Docker Desktop /
+# plain Linux Engine, attach mode — no sshd, no macvlan).
+# Launched via new-local-container.sh — don't run directly.
+
+services:
+  dev-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        USERNAME: coder
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
+        INSTALL_SSH: "false"
+        INSTALL_CLAUDE: "${INSTALL_CLAUDE:-true}"
+        INSTALL_AIDER: "${INSTALL_AIDER:-true}"
+        INSTALL_GEMINI: "${INSTALL_GEMINI:-true}"
+    # Shared tag: every local container reuses one image build
+    image: dev-agent:local
+
+    container_name: dev-agent-${CONTAINER_NAME}
+    hostname: ${CONTAINER_NAME}
+
+    restart: unless-stopped
+
+    # Egress firewall (init-firewall.sh) needs these; entrypoint fails loud
+    # if they're missing while ENABLE_FIREWALL=true (the default).
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Docker Desktop provides host.docker.internal natively; this line makes
+    # it work on plain Linux Engine too.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    environment:
+      - CONTAINER_NAME=${CONTAINER_NAME}
+      - GIT_USER_NAME=${GIT_USER_NAME:-}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
+      - TZ=${TZ:-America/Chicago}
+      # Host MCP opt-in: comma-separated TCP ports on host.docker.internal.
+      # Empty = container cannot reach the host at all.
+      - HOST_MCP_PORTS=${HOST_MCP_PORTS:-}
+      # Extra egress allowlist domains (comma-separated), per project.
+      - EXTRA_ALLOWED_DOMAINS=${EXTRA_ALLOWED_DOMAINS:-}
+
+    volumes:
+      # ── Project workspace: named volume, repo cloned inside ───────────────
+      # (compose project name prefixes this, so each container gets its own)
+      - workspace:/workspace
+
+      # ── Shared across all containers ──────────────────────────────────────
+      - ${SHARED_PATH}/claude:/home/coder/.claude
+      - ${SHARED_PATH}/mcp.json:/home/coder/.mcp.json:ro
+      - ${FORGE_AUTH_PATH}:${FORGE_AUTH_MOUNT}
+
+    mem_limit: 2g
+    memswap_limit: 2g
+
+volumes:
+  workspace:
