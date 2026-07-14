@@ -114,10 +114,28 @@ INSTALL_AIDER=$([[ "${INSTALL_AIDER:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "t
 INSTALL_GEMINI=$([[ "${INSTALL_GEMINI:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "true")
 
 # ── Docker icon (for Unraid dashboard) ────────────────────────────────────────
-read -p "Docker icon (URL or local path, blank to skip): " DOCKER_ICON
-if [[ -n "$DOCKER_ICON" && "$DOCKER_ICON" != http* ]]; then
-    # Convert local path to Unraid web URL
-    DOCKER_ICON="http://localhost${DOCKER_ICON}"
+ICONS_DIR="$SCRIPT_DIR/icons"
+if [ -d "$ICONS_DIR" ] && ls "$ICONS_DIR"/*.png &>/dev/null; then
+    echo "Available icons:"
+    i=1
+    ICON_FILES=()
+    for icon in "$ICONS_DIR"/*.png; do
+        ICON_FILES+=("$icon")
+        echo "  $i) $(basename "$icon" .png)"
+        i=$((i + 1))
+    done
+    echo "  0) Custom URL or skip"
+    read -p "Choose icon [0]: " ICON_CHOICE
+
+    if [[ -n "$ICON_CHOICE" && "$ICON_CHOICE" != "0" && "$ICON_CHOICE" -le "${#ICON_FILES[@]}" ]]; then
+        DOCKER_ICON="http://localhost${ICON_FILES[$((ICON_CHOICE - 1))]}"
+    elif [[ "$ICON_CHOICE" == "0" ]]; then
+        read -p "Docker icon URL (blank to skip): " DOCKER_ICON
+    else
+        DOCKER_ICON=""
+    fi
+else
+    read -p "Docker icon URL (blank to skip): " DOCKER_ICON
 fi
 
 # ── Ensure shared dirs exist ──────────────────────────────────────────────────

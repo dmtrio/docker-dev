@@ -85,8 +85,11 @@ RUN echo '' >> /home/$USERNAME/.bashrc \
     && echo 'source ~/.bashrc' >> /home/$USERNAME/.bash_profile
 
 # Install a default LTS node (projects can override via .node-version)
-ENV PATH="/home/coder/.fnm:$PATH"
+ENV PATH="/home/coder/.local/bin:/home/coder/.fnm:$PATH"
 RUN eval "$(fnm env)" && fnm install --lts && fnm use lts-latest
+
+# ── uv (Python package manager) ──────────────────────────────────────────────
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # ── AI tools (toggled via build args) ────────────────────────────────────────
 RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \

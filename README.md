@@ -105,10 +105,7 @@ Edit it from the Unraid terminal to add MCP servers (e.g. Browserless):
   "mcpServers": {
     "browser": {
       "command": "npx",
-      "args": ["playwright-browserless-mcp"],
-      "env": {
-        "BROWSERLESS_URL": "ws://192.168.35.90:3000?token=yourtoken"
-      }
+      "args": ["@playwright/mcp@latest", "--cdp-endpoint", "ws://192.168.35.90:3000?token=yourtoken"]
     }
   }
 }
