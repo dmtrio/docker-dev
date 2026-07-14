@@ -43,7 +43,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Gitea CLI (tea) ──────────────────────────────────────────────────────────
-RUN curl -fsSL "https://dl.gitea.com/tea/0.9.2/tea-0.9.2-linux-amd64" -o /usr/local/bin/tea \
+RUN curl -fsSL "https://dl.gitea.com/tea/0.9.2/tea-0.9.2-linux-$(dpkg --print-architecture)" -o /usr/local/bin/tea \
     && chmod +x /usr/local/bin/tea
 
 # ── Create non-root user ──────────────────────────────────────────────────────
