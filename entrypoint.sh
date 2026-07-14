@@ -54,7 +54,18 @@ if [ "$SSH_ENABLED" = "true" ]; then
     exec /usr/sbin/sshd -D
 else
     echo ""
-    echo "Attach mode (no sshd) — container stays up for attach/exec."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Container:  dev-agent-${CONTAINER_NAME}   (attach mode, no sshd)"
+    echo ""
+    echo "  VS Code / Cursor:"
+    echo "    Dev Containers: Attach to Running Container → dev-agent-${CONTAINER_NAME}"
+    echo "    then open /workspace (or /workspace/dev.code-workspace)"
+    echo ""
+    echo "  Terminal:   docker exec -it dev-agent-${CONTAINER_NAME} bash"
+    echo "  Workspace:  /workspace"
+    echo ""
+    echo "  Dev servers: use VS Code port forwarding, or publish ports at launch"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     exec sleep infinity
 fi
