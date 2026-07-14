@@ -102,6 +102,15 @@ RUN chmod +x /home/$USERNAME/entrypoint.sh
 # Back to root for the entrypoint (drops to coder context / runs sshd)
 USER root
 
+# ── Egress firewall (init-firewall.sh, run by entrypoint) ────────────────────
+# Needs NET_ADMIN + NET_RAW at runtime. Kept late in the file for layer cache.
+RUN apt-get update && apt-get install -y \
+    iptables ipset dnsutils aggregate \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY init-firewall.sh /usr/local/bin/init-firewall.sh
+RUN chmod +x /usr/local/bin/init-firewall.sh
+
 # ── SSH server (optional — remote-parity builds) ─────────────────────────────
 # Kept at the end of the file so INSTALL_SSH=true/false share all layers above.
 RUN if [ "$INSTALL_SSH" = "true" ]; then \
