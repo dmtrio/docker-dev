@@ -8,6 +8,21 @@ echo "║        Agent Dev Container         ║"
 echo "║        ${CONTAINER_NAME}                 ║"
 echo "╚══════════════════════════════════════════╝"
 
+# ── Egress firewall (default ON — fail loud, never run open) ─────────────────
+if [ "${ENABLE_FIREWALL:-true}" = "true" ]; then
+    if /usr/local/bin/init-firewall.sh; then
+        echo "✓ Egress firewall active"
+    else
+        echo ""
+        echo "FATAL: firewall setup failed (missing NET_ADMIN/NET_RAW caps?)."
+        echo "Refusing to start with open egress. Set ENABLE_FIREWALL=false to"
+        echo "run without the firewall, or add cap_add: [NET_ADMIN, NET_RAW]."
+        exit 1
+    fi
+else
+    echo "⚠ Egress firewall DISABLED (ENABLE_FIREWALL=false)"
+fi
+
 # ── Git config ────────────────────────────────────────────────────────────────
 if [ -n "$GIT_USER_NAME" ]; then
     su -c "git config --global user.name '$GIT_USER_NAME'" coder

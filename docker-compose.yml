@@ -25,6 +25,9 @@ services:
     restart: unless-stopped
 
     environment:
+      # Firewall opt-out: preserves pre-RFC03 homelab behavior (no NET_ADMIN
+      # cap here). Remove this + add cap_add [NET_ADMIN, NET_RAW] to enable.
+      - ENABLE_FIREWALL=false
       - CONTAINER_NAME=${CONTAINER_NAME}
       - GIT_USER_NAME=${GIT_USER_NAME:-}
       - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
