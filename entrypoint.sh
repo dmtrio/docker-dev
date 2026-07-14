@@ -26,29 +26,35 @@ fi
 # ── Git safe directory ────────────────────────────────────────────────────────
 su -c "git config --global safe.directory /workspace" coder
 
-# ── SSH host keys ─────────────────────────────────────────────────────────────
-if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-    echo "Generating SSH host keys..."
-    ssh-keygen -A
-    echo "✓ SSH host keys generated"
+# ── SSH mode vs attach mode ───────────────────────────────────────────────────
+if [ "$SSH_ENABLED" = "true" ]; then
+    # SSH host keys
+    if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+        echo "Generating SSH host keys..."
+        ssh-keygen -A
+        echo "✓ SSH host keys generated"
+    fi
+
+    CONTAINER_IP=$(hostname -I | awk '{print $1}')
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Container:  dev-agent-${CONTAINER_NAME}"
+    echo "  Hostname:   ${CONTAINER_NAME}"
+    echo "  IP:         ${CONTAINER_IP}"
+    echo ""
+    echo "  SSH:        ssh coder@${CONTAINER_IP}"
+    echo "  VS Code:    Remote SSH → ${CONTAINER_NAME} (if ~/.ssh/config is set)"
+    echo "  Workspace:  /workspace"
+    echo ""
+    echo "  Dev servers will be reachable at http://${CONTAINER_IP}:<port>"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    echo "Starting sshd..."
+    exec /usr/sbin/sshd -D
+else
+    echo ""
+    echo "Attach mode (no sshd) — container stays up for attach/exec."
+    echo ""
+    exec sleep infinity
 fi
-
-# ── Print connection info ─────────────────────────────────────────────────────
-CONTAINER_IP=$(hostname -I | awk '{print $1}')
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Container:  dev-agent-${CONTAINER_NAME}"
-echo "  Hostname:   ${CONTAINER_NAME}"
-echo "  IP:         ${CONTAINER_IP}"
-echo ""
-echo "  SSH:        ssh coder@${CONTAINER_IP}"
-echo "  VS Code:    Remote SSH → ${CONTAINER_NAME} (if ~/.ssh/config is set)"
-echo "  Workspace:  /workspace"
-echo ""
-echo "  Dev servers will be reachable at http://${CONTAINER_IP}:<port>"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-
-# ── Start SSH daemon ──────────────────────────────────────────────────────────
-echo "Starting sshd..."
-exec /usr/sbin/sshd -D

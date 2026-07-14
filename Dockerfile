@@ -11,11 +11,10 @@ ARG AUTHORIZED_KEY=""
 ARG INSTALL_CLAUDE="true"
 ARG INSTALL_AIDER="true"
 ARG INSTALL_GEMINI="true"
+ARG INSTALL_SSH="true"
 
 # ── System packages ───────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
-    # SSH
-    openssh-server \
     # Core utilities
     curl wget git git-lfs sudo \
     # Build tools
@@ -52,22 +51,9 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd --uid $USER_UID --gid $USER_GID -m -s /bin/bash $USERNAME \
     && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# ── SSH server setup ──────────────────────────────────────────────────────────
-RUN mkdir /var/run/sshd \
-    && sed -i \
-        -e 's/#PasswordAuthentication yes/PasswordAuthentication no/' \
-        -e 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' \
-        -e 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' \
-        /etc/ssh/sshd_config \
-    && echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config
-
-# ── Inject authorized key (build arg) ────────────────────────────────────────
+# ── User .ssh dir (server + keys handled in the SSH block near EOF) ──────────
 RUN mkdir -p /home/$USERNAME/.ssh \
     && chmod 700 /home/$USERNAME/.ssh \
-    && if [ -n "$AUTHORIZED_KEY" ]; then \
-        echo "$AUTHORIZED_KEY" > /home/$USERNAME/.ssh/authorized_keys; \
-       fi \
-    && chmod 600 /home/$USERNAME/.ssh/authorized_keys \
     && chown -R $USERNAME:$USERNAME /home/$USERNAME/.ssh
 
 # ── fnm (Fast Node Manager) ───────────────────────────────────────────────────
@@ -113,9 +99,30 @@ WORKDIR /workspace
 COPY --chown=$USERNAME:$USERNAME entrypoint.sh /home/$USERNAME/entrypoint.sh
 RUN chmod +x /home/$USERNAME/entrypoint.sh
 
-EXPOSE 22
-
-# Back to root to run sshd (entrypoint drops back to coder context)
+# Back to root for the entrypoint (drops to coder context / runs sshd)
 USER root
+
+# ── SSH server (optional — remote-parity builds) ─────────────────────────────
+# Kept at the end of the file so INSTALL_SSH=true/false share all layers above.
+RUN if [ "$INSTALL_SSH" = "true" ]; then \
+        apt-get update && apt-get install -y openssh-server \
+        && rm -rf /var/lib/apt/lists/* \
+        && mkdir -p /var/run/sshd \
+        && sed -i \
+            -e 's/#PasswordAuthentication yes/PasswordAuthentication no/' \
+            -e 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' \
+            -e 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' \
+            /etc/ssh/sshd_config \
+        && echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config \
+        && if [ -n "$AUTHORIZED_KEY" ]; then \
+            echo "$AUTHORIZED_KEY" > /home/$USERNAME/.ssh/authorized_keys \
+            && chmod 600 /home/$USERNAME/.ssh/authorized_keys \
+            && chown $USERNAME:$USERNAME /home/$USERNAME/.ssh/authorized_keys; \
+        fi; \
+    fi
+
+ENV SSH_ENABLED=$INSTALL_SSH
+
+EXPOSE 22
 
 ENTRYPOINT ["/home/coder/entrypoint.sh"]
