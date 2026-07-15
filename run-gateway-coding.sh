@@ -4,7 +4,7 @@
 #
 # Run it in tmux, or wrap in a launchd plist for boot persistence.
 # Containers need HOST_MCP_PORTS=8811 and the token in their .mcp.json:
-#   Authorization: Bearer $(cat ~/dev-agent/shared/gateway-coding.token)
+#   Authorization: Bearer $(cat ~/dev-agent/secrets/gateway-coding.token)
 #
 # Security posture:
 # - Binds localhost only (containers reach it via Docker Desktop's
@@ -18,7 +18,7 @@
 
 set -e
 
-TOKEN_FILE="${DEV_AGENT_HOME:-$HOME/dev-agent}/shared/gateway-coding.token"
+TOKEN_FILE="${DEV_AGENT_HOME:-$HOME/dev-agent}/secrets/gateway-coding.token"
 if [ ! -s "$TOKEN_FILE" ]; then
     mkdir -p "$(dirname "$TOKEN_FILE")"
     openssl rand -hex 24 > "$TOKEN_FILE"

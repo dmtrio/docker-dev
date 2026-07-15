@@ -36,7 +36,8 @@ fi
 echo "Profile '$PROFILE': ports='${HOST_MCP_PORTS:-none}' domains='${EXTRA_ALLOWED_DOMAINS:-none}'"
 
 BASE_PATH="${DEV_AGENT_HOME:-$HOME/dev-agent}"
-SHARED_PATH="$BASE_PATH/shared"
+SHARED_PATH="$BASE_PATH/shared"    # mounted into containers (claude, forge auth)
+SECRETS_PATH="$BASE_PATH/secrets"  # host-only: service tokens, NEVER mounted
 
 # ── Platform detection ────────────────────────────────────────────────────────
 # Docker Desktop (macOS) maps bind-mount ownership transparently; plain Linux
@@ -120,19 +121,19 @@ mkdir -p "$ARTIFACTS_PATH"
 
 : > "$KEYS_PATH/common.env"
 if echo ",$HOST_MCP_PORTS," | grep -q ",8811,"; then
-    TOK="$(cat "$SHARED_PATH/gateway-coding.token" 2>/dev/null || true)"
+    TOK="$(cat "$SECRETS_PATH/gateway-coding.token" 2>/dev/null || true)"
     [ -n "$TOK" ] && echo "MCP_GATEWAY_TOKEN=$TOK" >> "$KEYS_PATH/common.env" \
-        || echo "WARNING: port 8811 granted but $SHARED_PATH/gateway-coding.token missing"
+        || echo "WARNING: port 8811 granted but $SECRETS_PATH/gateway-coding.token missing"
 fi
 if echo ",$HOST_MCP_PORTS," | grep -q ",8813,"; then
-    TOK="$(cat "$SHARED_PATH/proxyman-bridge.key" 2>/dev/null || true)"
+    TOK="$(cat "$SECRETS_PATH/proxyman-bridge.key" 2>/dev/null || true)"
     [ -n "$TOK" ] && echo "PROXYMAN_BRIDGE_KEY=$TOK" >> "$KEYS_PATH/common.env" \
-        || echo "WARNING: port 8813 granted but $SHARED_PATH/proxyman-bridge.key missing"
+        || echo "WARNING: port 8813 granted but $SECRETS_PATH/proxyman-bridge.key missing"
 fi
 if echo ",$HOST_MCP_PORTS," | grep -q ",8814,"; then
-    TOK="$(cat "$SHARED_PATH/research-browser.key" 2>/dev/null || true)"
+    TOK="$(cat "$SECRETS_PATH/research-browser.key" 2>/dev/null || true)"
     [ -n "$TOK" ] && echo "RESEARCH_BROWSER_KEY=$TOK" >> "$KEYS_PATH/common.env" \
-        || echo "WARNING: port 8814 granted but $SHARED_PATH/research-browser.key missing (run run-research-browser.sh once)"
+        || echo "WARNING: port 8814 granted but $SECRETS_PATH/research-browser.key missing (run run-research-browser.sh once)"
 fi
 chmod 600 "$KEYS_PATH/common.env"
 

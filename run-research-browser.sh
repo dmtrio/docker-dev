@@ -29,7 +29,7 @@ PROFILE_DIR="$BASE_PATH/research-browser"
 CDP_PORT=9222
 BRIDGE_PORT=8814
 
-KEY_FILE="$BASE_PATH/shared/research-browser.key"
+KEY_FILE="$BASE_PATH/secrets/research-browser.key"
 if [ ! -s "$KEY_FILE" ]; then
     mkdir -p "$(dirname "$KEY_FILE")"
     openssl rand -hex 24 > "$KEY_FILE"

@@ -18,7 +18,7 @@ PROXYMAN_MCP="/Applications/Setapp/Proxyman.app/Contents/MacOS/mcp-server"
 [ -x "$PROXYMAN_MCP" ] || PROXYMAN_MCP="/Applications/Proxyman.app/Contents/MacOS/mcp-server"
 [ -x "$PROXYMAN_MCP" ] || { echo "ERROR: Proxyman mcp-server binary not found"; exit 1; }
 
-KEY_FILE="${DEV_AGENT_HOME:-$HOME/dev-agent}/shared/proxyman-bridge.key"
+KEY_FILE="${DEV_AGENT_HOME:-$HOME/dev-agent}/secrets/proxyman-bridge.key"
 if [ ! -s "$KEY_FILE" ]; then
     mkdir -p "$(dirname "$KEY_FILE")"
     openssl rand -hex 24 > "$KEY_FILE"
