@@ -14,8 +14,9 @@ services:
         USER_GID: ${USER_GID:-1000}
         INSTALL_SSH: "false"
         INSTALL_CLAUDE: "${INSTALL_CLAUDE:-true}"
-        INSTALL_AIDER: "${INSTALL_AIDER:-true}"
+        INSTALL_PI: "${INSTALL_PI:-true}"
         INSTALL_GEMINI: "${INSTALL_GEMINI:-true}"
+        INSTALL_CURSOR: "${INSTALL_CURSOR:-true}"
     # Shared tag: every local container reuses one image build
     image: dev-agent:local
 

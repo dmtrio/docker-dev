@@ -106,11 +106,13 @@ read -p "Git user.email: " GIT_USER_EMAIL
 # ── AI tools ─────────────────────────────────────────────────────────────────
 echo "AI tools to install:"
 read -p "  Claude Code? [Y/n]: " INSTALL_CLAUDE
-read -p "  Aider?       [Y/n]: " INSTALL_AIDER
+read -p "  pi?          [Y/n]: " INSTALL_PI
+read -p "  Cursor agent? [Y/n]: " INSTALL_CURSOR
 read -p "  Gemini CLI?  [Y/n]: " INSTALL_GEMINI
 
 INSTALL_CLAUDE=$([[ "${INSTALL_CLAUDE:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "true")
-INSTALL_AIDER=$([[ "${INSTALL_AIDER:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "true")
+INSTALL_PI=$([[ "${INSTALL_PI:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "true")
+INSTALL_CURSOR=$([[ "${INSTALL_CURSOR:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "true")
 INSTALL_GEMINI=$([[ "${INSTALL_GEMINI:-y}" =~ ^[Nn]$ ]] && echo "false" || echo "true")
 
 # ── Docker icon (for Unraid dashboard) ────────────────────────────────────────
@@ -156,7 +158,8 @@ FORGE_AUTH_MOUNT="$FORGE_AUTH_MOUNT" \
 GIT_USER_NAME="$GIT_USER_NAME" \
 GIT_USER_EMAIL="$GIT_USER_EMAIL" \
 INSTALL_CLAUDE="$INSTALL_CLAUDE" \
-INSTALL_AIDER="$INSTALL_AIDER" \
+INSTALL_PI="$INSTALL_PI" \
+INSTALL_CURSOR="$INSTALL_CURSOR" \
 INSTALL_GEMINI="$INSTALL_GEMINI" \
 DOCKER_ICON="$DOCKER_ICON" \
 docker compose -p "dev-agent-$CONTAINER_NAME" -f "$SCRIPT_DIR/docker-compose.yml" up -d --build

@@ -9,8 +9,9 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 ARG AUTHORIZED_KEY=""
 ARG INSTALL_CLAUDE="true"
-ARG INSTALL_AIDER="true"
+ARG INSTALL_PI="true"
 ARG INSTALL_GEMINI="true"
+ARG INSTALL_CURSOR="true"
 ARG INSTALL_SSH="true"
 
 # ── System packages ───────────────────────────────────────────────────────────
@@ -82,12 +83,19 @@ RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
         eval "$(fnm env)" && npm install -g @anthropic-ai/claude-code; \
     fi
 
-RUN if [ "$INSTALL_AIDER" = "true" ]; then \
-        pip3 install aider-chat --break-system-packages; \
+# pi ships an interactive installer (pi.dev/install.sh) that just wraps this
+# npm package — install it directly for non-TTY builds
+RUN if [ "$INSTALL_PI" = "true" ]; then \
+        eval "$(fnm env)" && npm install -g @earendil-works/pi-coding-agent; \
     fi
 
 RUN if [ "$INSTALL_GEMINI" = "true" ]; then \
         eval "$(fnm env)" && npm install -g @google/gemini-cli; \
+    fi
+
+# Installs to ~/.local/share/cursor-agent, symlinks into ~/.local/bin (on PATH)
+RUN if [ "$INSTALL_CURSOR" = "true" ]; then \
+        curl -fsSL https://cursor.com/install | bash; \
     fi
 
 # ── Workspace ─────────────────────────────────────────────────────────────────

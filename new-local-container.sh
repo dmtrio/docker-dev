@@ -79,16 +79,19 @@ GIT_USER_EMAIL="${GIT_USER_EMAIL:-$DEFAULT_EMAIL}"
 
 # ── AI tools ─────────────────────────────────────────────────────────────────
 echo "AI tools to install:"
-printf "  Claude Code? [Y/n]: "
+printf "  Claude Code?   [Y/n]: "
 read INSTALL_CLAUDE
-printf "  Aider?       [Y/n]: "
-read INSTALL_AIDER
-printf "  Gemini CLI?  [Y/n]: "
+printf "  pi?            [Y/n]: "
+read INSTALL_PI
+printf "  Gemini CLI?    [Y/n]: "
 read INSTALL_GEMINI
+printf "  Cursor agent?  [Y/n]: "
+read INSTALL_CURSOR
 
 case "${INSTALL_CLAUDE:-y}" in [Nn]*) INSTALL_CLAUDE=false ;; *) INSTALL_CLAUDE=true ;; esac
-case "${INSTALL_AIDER:-y}"  in [Nn]*) INSTALL_AIDER=false  ;; *) INSTALL_AIDER=true  ;; esac
+case "${INSTALL_PI:-y}"     in [Nn]*) INSTALL_PI=false     ;; *) INSTALL_PI=true     ;; esac
 case "${INSTALL_GEMINI:-y}" in [Nn]*) INSTALL_GEMINI=false ;; *) INSTALL_GEMINI=true ;; esac
+case "${INSTALL_CURSOR:-y}" in [Nn]*) INSTALL_CURSOR=false ;; *) INSTALL_CURSOR=true ;; esac
 
 # ── Host MCP + extra egress (per RFC 03: opt-in, default closed) ─────────────
 printf "Host MCP ports (comma-separated, blank = host unreachable): "
@@ -114,8 +117,9 @@ FORGE_AUTH_MOUNT="$FORGE_AUTH_MOUNT" \
 GIT_USER_NAME="$GIT_USER_NAME" \
 GIT_USER_EMAIL="$GIT_USER_EMAIL" \
 INSTALL_CLAUDE="$INSTALL_CLAUDE" \
-INSTALL_AIDER="$INSTALL_AIDER" \
+INSTALL_PI="$INSTALL_PI" \
 INSTALL_GEMINI="$INSTALL_GEMINI" \
+INSTALL_CURSOR="$INSTALL_CURSOR" \
 HOST_MCP_PORTS="$HOST_MCP_PORTS" \
 EXTRA_ALLOWED_DOMAINS="$EXTRA_ALLOWED_DOMAINS" \
 docker compose -p "dev-agent-$CONTAINER_NAME" -f "$SCRIPT_DIR/docker-compose.local.yml" up -d --build

@@ -88,6 +88,10 @@ registry.npmjs.org
 api.anthropic.com
 console.anthropic.com
 claude.ai
+pi.dev
+cursor.com
+api2.cursor.sh
+downloads.cursor.com
 sentry.io
 statsig.anthropic.com
 statsig.com
