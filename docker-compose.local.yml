@@ -72,9 +72,16 @@ services:
       # ── Shared knowledge, never shared identity ───────────────────────────
       # Global rules + skills, read-only: host is the single writer; agents
       # propose changes via PR to the rules repo (see AGENTS.md governance).
-      # Credentials (claude/codex/gh logins) are container-local by design —
-      # identity is scoped to the container.
       - ${RULES_PATH}:/agent-rules:ro
+
+      # ── Per-container auth/state: scoped to THIS container, but survives
+      # its rebuilds/recreates (log in once per container, not per rebuild).
+      # Removed only by down.sh --purge.
+      - claude-auth:/home/coder/.claude
+      - codex-auth:/home/coder/.codex
+      - gemini-state:/home/coder/.gemini
+      - cursor-state:/home/coder/.cursor
+      - gh-auth:/home/coder/.config/gh
 
     # Memory cap comes from the capability profile (coding needs headroom
     # for builds/tests; default stays lean)
@@ -83,3 +90,8 @@ services:
 
 volumes:
   workspace:
+  claude-auth:
+  codex-auth:
+  gemini-state:
+  cursor-state:
+  gh-auth:

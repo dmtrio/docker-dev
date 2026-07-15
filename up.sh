@@ -286,6 +286,18 @@ touch /workspace/.mcp.generated
 echo "  ✓ .mcp.json generated ($(echo "$J" | jq -r ".mcpServers | keys | join(\", \")"))"
 '
 
+# ── Pre-approve the generated MCP servers for Claude ─────────────────────────
+# Approval state lives in ~/.claude.json; since we generated .mcp.json from
+# the manifest, its servers are approved by construction. Merge, don't clobber.
+docker exec -u coder "dev-agent-$NAME" bash -c '
+[ -f /workspace/main/.mcp.json ] || exit 0
+SERVERS=$(jq -c "[.mcpServers | keys[]]" /workspace/main/.mcp.json)
+[ -f /home/coder/.claude.json ] || echo "{}" > /home/coder/.claude.json
+jq --argjson s "$SERVERS" ".projects[\"/workspace/main\"].enabledMcpjsonServers = \$s | .projects[\"/workspace/main\"].hasTrustDialogAccepted = true" \
+    /home/coder/.claude.json > /tmp/cj.json && mv /tmp/cj.json /home/coder/.claude.json
+echo "  ✓ MCP servers pre-approved for claude ($(echo "$SERVERS" | jq -r "join(\", \")"))"
+'
+
 # ── Per-agent MCP configs beyond Claude ──────────────────────────────────────
 # Cursor and Gemini cannot reliably expand env vars in headers for remote
 # servers, so their configs carry the literal key: container-local home

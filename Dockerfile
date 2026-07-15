@@ -124,6 +124,11 @@ RUN mkdir -p /home/$USERNAME/.agent-shims && \
     echo '# agent-identity shims must win over the real binaries' >> /home/$USERNAME/.bashrc && \
     echo 'export PATH="$HOME/.agent-shims:$PATH"' >> /home/$USERNAME/.bashrc
 
+# Auth/state dirs pre-created as coder so their per-container named volumes
+# initialize with the right ownership on first mount
+RUN mkdir -p /home/$USERNAME/.claude /home/$USERNAME/.codex \
+    /home/$USERNAME/.gemini /home/$USERNAME/.cursor /home/$USERNAME/.config/gh
+
 # ── Workspace ─────────────────────────────────────────────────────────────────
 RUN sudo mkdir -p /workspace && sudo chown $USERNAME:$USERNAME /workspace
 
