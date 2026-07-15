@@ -71,8 +71,10 @@ services:
       - ${SHARED_PATH}/mcp.json:/home/coder/.mcp.json:ro
       - ${FORGE_AUTH_PATH}:${FORGE_AUTH_MOUNT}
 
-    mem_limit: 2g
-    memswap_limit: 2g
+    # Memory cap comes from the capability profile (coding needs headroom
+    # for builds/tests; default stays lean)
+    mem_limit: ${MEM_LIMIT:-2g}
+    memswap_limit: ${MEM_LIMIT:-2g}
 
 volumes:
   workspace:

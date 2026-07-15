@@ -175,6 +175,7 @@ HOST_MCP_PORTS="$HOST_MCP_PORTS" \
 EXTRA_ALLOWED_DOMAINS="$EXTRA_ALLOWED_DOMAINS" \
 KEYS_PATH="$KEYS_PATH" \
 ARTIFACTS_PATH="$ARTIFACTS_PATH" \
+MEM_LIMIT="${MEM_LIMIT:-2g}" \
 docker compose -p "dev-agent-$CONTAINER_NAME" -f "$SCRIPT_DIR/docker-compose.local.yml" up -d --build
 
 # ── Wait for firewall/entrypoint to settle ────────────────────────────────────

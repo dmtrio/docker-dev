@@ -13,16 +13,16 @@
 
 set -e
 
-BRAVE="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+BRAVE="/Applications/Brave Browser.app"
+CHROME="/Applications/Google Chrome.app"
 
 case "${1:-auto}" in
-    brave)  BIN="$BRAVE" ;;
-    chrome) BIN="$CHROME" ;;
-    auto)   if [ -x "$BRAVE" ]; then BIN="$BRAVE"; else BIN="$CHROME"; fi ;;
+    brave)  APP="$BRAVE" ;;
+    chrome) APP="$CHROME" ;;
+    auto)   if [ -d "$BRAVE" ]; then APP="$BRAVE"; else APP="$CHROME"; fi ;;
     *) echo "Usage: $0 [brave|chrome]"; exit 1 ;;
 esac
-[ -x "$BIN" ] || { echo "ERROR: browser not found at $BIN"; exit 1; }
+[ -d "$APP" ] || { echo "ERROR: browser not found at $APP"; exit 1; }
 
 BASE_PATH="${DEV_AGENT_HOME:-$HOME/dev-agent}"
 PROFILE_DIR="$BASE_PATH/research-browser"
@@ -37,16 +37,17 @@ if [ ! -s "$KEY_FILE" ]; then
     echo "Generated new bridge key at $KEY_FILE"
 fi
 
-# Start the browser if its CDP port isn't already up (idempotent)
+# Start the browser if its CDP port isn't already up (idempotent).
+# open -n detaches via LaunchServices so the browser outlives this script's
+# shell (a directly-exec'd child dies with it).
 if ! curl -s -m 2 "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null; then
-    echo "Launching $(basename "$BIN") with isolated profile $PROFILE_DIR"
+    echo "Launching $(basename "$APP" .app) with isolated profile $PROFILE_DIR"
     mkdir -p "$PROFILE_DIR"
-    "$BIN" \
+    open -n "$APP" --args \
         --user-data-dir="$PROFILE_DIR" \
         --remote-debugging-port=$CDP_PORT \
         --no-first-run \
-        --no-default-browser-check \
-        >/dev/null 2>&1 &
+        --no-default-browser-check
     for i in $(seq 1 20); do
         curl -s -m 2 "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null && break
         sleep 1
