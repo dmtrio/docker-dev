@@ -146,15 +146,34 @@ chmod 600 "$KEYS_PATH/common.env"
 
 HAS_OBSIDIAN=false
 if [ "${PROMPT_OBSIDIAN_KEY:-false}" = "true" ]; then
-    printf "Obsidian Annotated scoped key for the claude agent (blank = none): "
-    read -s CLAUDE_OBSIDIAN_KEY
-    echo ""
-    if [ -n "$CLAUDE_OBSIDIAN_KEY" ]; then
-        echo "OBSIDIAN_ANNOTATED_KEY=$CLAUDE_OBSIDIAN_KEY" > "$KEYS_PATH/claude.env"
-        chmod 600 "$KEYS_PATH/claude.env"
-        HAS_OBSIDIAN=true
+    # Preferred: pre-placed key files, one identity pair per agent:
+    #   ~/dev-agent/secrets/obsidian/<container>/<agent>.key       (additive/destructive)
+    #   ~/dev-agent/secrets/obsidian/<container>/<agent>.poll.key  (optional, watcher tier)
+    OBS_DIR="$SECRETS_PATH/obsidian/$CONTAINER_NAME"
+    for a in claude pi gemini cursor-agent codex; do
+        if [ -s "$OBS_DIR/$a.key" ]; then
+            echo "OBSIDIAN_ANNOTATED_KEY=$(cat "$OBS_DIR/$a.key")" >> "$KEYS_PATH/$a.env"
+            echo "  ✓ obsidian key for $a (from secrets/obsidian/$CONTAINER_NAME/)"
+            [ "$a" = "claude" ] && HAS_OBSIDIAN=true
+        fi
+        if [ -s "$OBS_DIR/$a.poll.key" ]; then
+            echo "ANNOTATED_WATCH_KEY=$(cat "$OBS_DIR/$a.poll.key")" >> "$KEYS_PATH/$a.env"
+        fi
+        [ -f "$KEYS_PATH/$a.env" ] && chmod 600 "$KEYS_PATH/$a.env"
+    done
+
+    # Fallback: prompt for claude's key if no file provided it
+    if [ "$HAS_OBSIDIAN" = "false" ]; then
+        printf "Obsidian Annotated scoped key for the claude agent (blank = none): "
+        read -s CLAUDE_OBSIDIAN_KEY
+        echo ""
+        if [ -n "$CLAUDE_OBSIDIAN_KEY" ]; then
+            echo "OBSIDIAN_ANNOTATED_KEY=$CLAUDE_OBSIDIAN_KEY" >> "$KEYS_PATH/claude.env"
+            chmod 600 "$KEYS_PATH/claude.env"
+            HAS_OBSIDIAN=true
+        fi
     fi
-    echo "(other agents: ./update-agent-keys.sh $CONTAINER_NAME pi OBSIDIAN_ANNOTATED_KEY ...)"
+    echo "(later changes: ./update-agent-keys.sh $CONTAINER_NAME <agent> OBSIDIAN_ANNOTATED_KEY)"
 fi
 
 # ── Ensure shared dirs exist ──────────────────────────────────────────────────
