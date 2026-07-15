@@ -65,8 +65,45 @@ CAP_GATEWAY=$(yq '.capabilities.gateway // false' "$MANIFEST")
 CAP_PROXYMAN=$(yq '.capabilities.proxyman // false' "$MANIFEST")
 CAP_BROWSER=$(yq '.capabilities.browser // false' "$MANIFEST")
 EGRESS=$(yq -r '(.capabilities.egress // []) | join(",")' "$MANIFEST")
-OBS_AGENTS=$(yq -r '(.identities.obsidian // []) | join(" ")' "$MANIFEST")
-WATCH_AGENTS=$(yq -r '(.identities.watch // []) | join(" ")' "$MANIFEST")
+OBS_REFS=$(yq -r '(.identities.obsidian // []) | join(" ")' "$MANIFEST")
+WATCH_REFS=$(yq -r '(.identities.watch // []) | join(" ")' "$MANIFEST")
+
+# Identity refs are EXPLICIT secret-name suffixes: a ref R reads
+# OBSIDIAN_KEY_R (or OBSIDIAN_WATCH_KEY_R) from secrets.env, and the agent
+# it belongs to is R's suffix: _claude, _codex, _pi, _gemini, _cursor_agent.
+agent_for_ref() {
+    case "$1" in
+        *_cursor_agent) echo "cursor-agent" ;;
+        *_claude)       echo "claude" ;;
+        *_codex)        echo "codex" ;;
+        *_pi)           echo "pi" ;;
+        *_gemini)       echo "gemini" ;;
+        *) echo "" ;;
+    esac
+}
+
+# Validate ALL identity refs before touching anything (hard fail on error)
+IDENTITY_ERRORS=""
+for ref in $OBS_REFS; do
+    a=$(agent_for_ref "$ref")
+    [ -z "$a" ] && IDENTITY_ERRORS="$IDENTITY_ERRORS
+  obsidian ref '$ref': suffix is not a known agent (_claude/_codex/_pi/_gemini/_cursor_agent)"
+    eval "v=\${OBSIDIAN_KEY_$ref:-}"
+    [ -n "$a" ] && [ -z "$v" ] && IDENTITY_ERRORS="$IDENTITY_ERRORS
+  obsidian ref '$ref': OBSIDIAN_KEY_$ref not found in $SECRETS_FILE"
+done
+for ref in $WATCH_REFS; do
+    a=$(agent_for_ref "$ref")
+    [ -z "$a" ] && IDENTITY_ERRORS="$IDENTITY_ERRORS
+  watch ref '$ref': suffix is not a known agent (_claude/_codex/_pi/_gemini/_cursor_agent)"
+    eval "v=\${OBSIDIAN_WATCH_KEY_$ref:-}"
+    [ -n "$a" ] && [ -z "$v" ] && IDENTITY_ERRORS="$IDENTITY_ERRORS
+  watch ref '$ref': OBSIDIAN_WATCH_KEY_$ref not found in $SECRETS_FILE"
+done
+if [ -n "$IDENTITY_ERRORS" ]; then
+    echo "Error: manifest identity references failed validation:$IDENTITY_ERRORS"
+    exit 1
+fi
 
 HOST_MCP_PORTS=""
 [ "$CAP_GATEWAY" = "true" ]  && HOST_MCP_PORTS="$HOST_MCP_PORTS,8811"
@@ -75,7 +112,7 @@ HOST_MCP_PORTS=""
 HOST_MCP_PORTS="${HOST_MCP_PORTS#,}"
 
 # Obsidian identities imply the Annotated endpoint in the egress allowlist
-if [ -n "$OBS_AGENTS" ] && ! echo ",$EGRESS," | grep -q ",mcp-obsidian.dmetr.io,"; then
+if [ -n "$OBS_REFS" ] && ! echo ",$EGRESS," | grep -q ",mcp-obsidian.dmetr.io,"; then
     EGRESS="${EGRESS:+$EGRESS,}mcp-obsidian.dmetr.io"
 fi
 
@@ -102,24 +139,16 @@ fi
 [ -n "${GH_TOKEN:-}" ] && echo "GH_TOKEN=$GH_TOKEN" >> "$KEYS_PATH/common.env"
 chmod 600 "$KEYS_PATH/common.env"
 
-SAFE_NAME=$(echo "$NAME" | tr '-' '_')
-for a in $OBS_AGENTS; do
-    var="OBSIDIAN_KEY_${SAFE_NAME}_$(echo "$a" | tr '-' '_')"
-    eval "v=\${$var:-}"
-    if [ -n "$v" ]; then
-        echo "OBSIDIAN_ANNOTATED_KEY=$v" >> "$KEYS_PATH/$a.env"
-    else
-        warn_missing "$var" "obsidian identity for $a"
-    fi
+# Identity refs were validated above — compose them (values checked, present)
+for ref in $OBS_REFS; do
+    a=$(agent_for_ref "$ref")
+    eval "v=\$OBSIDIAN_KEY_$ref"
+    echo "OBSIDIAN_ANNOTATED_KEY=$v" >> "$KEYS_PATH/$a.env"
 done
-for a in $WATCH_AGENTS; do
-    var="OBSIDIAN_WATCH_KEY_${SAFE_NAME}_$(echo "$a" | tr '-' '_')"
-    eval "v=\${$var:-}"
-    if [ -n "$v" ]; then
-        echo "ANNOTATED_WATCH_KEY=$v" >> "$KEYS_PATH/$a.env"
-    else
-        warn_missing "$var" "watch identity for $a"
-    fi
+for ref in $WATCH_REFS; do
+    a=$(agent_for_ref "$ref")
+    eval "v=\$OBSIDIAN_WATCH_KEY_$ref"
+    echo "ANNOTATED_WATCH_KEY=$v" >> "$KEYS_PATH/$a.env"
 done
 for f in "$KEYS_PATH"/*.env; do [ -f "$f" ] && chmod 600 "$f"; done
 
@@ -193,7 +222,7 @@ docker exec "dev-agent-$NAME" chown coder:coder /workspace/CLAUDE.md
 # ── Generate .mcp.json (Claude only; ${VAR} refs, values via shims) ──────────
 # Regenerated on every up UNLESS the repo brought its own (no marker file).
 HAS_OBSIDIAN=false
-for a in $OBS_AGENTS; do [ "$a" = "claude" ] && HAS_OBSIDIAN=true; done
+for ref in $OBS_REFS; do [ "$(agent_for_ref "$ref")" = "claude" ] && HAS_OBSIDIAN=true; done
 
 docker exec -u coder \
     -e WANT_GATEWAY="$CAP_GATEWAY" -e WANT_PROXYMAN="$CAP_PROXYMAN" \

@@ -33,20 +33,21 @@ capabilities:
   browser: false
   egress: []                       # extra allowed outbound domains, e.g. [api.stripe.com]
 
-# Per-agent identities (agent = binary name: claude, codex, pi, gemini, cursor-agent).
-# Values come from secrets.env by convention (dashes become underscores):
-#   obsidian: OBSIDIAN_KEY_<name>_<agent>        → OBSIDIAN_ANNOTATED_KEY
-#   watch:    OBSIDIAN_WATCH_KEY_<name>_<agent>  → ANNOTATED_WATCH_KEY
-# Listing an agent under obsidian also allowlists the Annotated endpoint.
+# Per-agent identities — EXPLICIT references to secrets.env names.
+# An entry R reads OBSIDIAN_KEY_R (obsidian) or OBSIDIAN_WATCH_KEY_R (watch);
+# the agent it belongs to is R's suffix: _claude, _codex, _pi, _gemini,
+# _cursor_agent. up.sh validates every reference at apply time and HARD-FAILS
+# if a key is missing from secrets.env or a suffix isn't a known agent.
+# Any obsidian entry also allowlists the Annotated endpoint.
 #
-# Example — for containers/personal-site.yml these entries:
+# Example:
 #   identities:
-#     obsidian: [claude, codex]
-#     watch: [claude]
-# read these lines from ~/dev-agent/secrets.env (see .env.example):
-#   OBSIDIAN_KEY_personal_site_claude=ann_additive_…
-#   OBSIDIAN_KEY_personal_site_codex=ann_additive_…
-#   OBSIDIAN_WATCH_KEY_personal_site_claude=ann_poll_…
+#     obsidian: [personal_site_claude, default_gemini]
+#     watch: [personal_site_claude]
+# reads from ~/dev-agent/secrets.env (see .env.example):
+#   OBSIDIAN_KEY_personal_site_claude=ann_additive_…   → claude
+#   OBSIDIAN_KEY_default_gemini=ann_additive_…         → gemini (shared identity)
+#   OBSIDIAN_WATCH_KEY_personal_site_claude=ann_poll_… → claude
 identities:
   obsidian: []
   watch: []
