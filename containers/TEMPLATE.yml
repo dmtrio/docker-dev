@@ -38,6 +38,15 @@ capabilities:
 #   obsidian: OBSIDIAN_KEY_<name>_<agent>        → OBSIDIAN_ANNOTATED_KEY
 #   watch:    OBSIDIAN_WATCH_KEY_<name>_<agent>  → ANNOTATED_WATCH_KEY
 # Listing an agent under obsidian also allowlists the Annotated endpoint.
+#
+# Example — for containers/personal-site.yml these entries:
+#   identities:
+#     obsidian: [claude, codex]
+#     watch: [claude]
+# read these lines from ~/dev-agent/secrets.env (see .env.example):
+#   OBSIDIAN_KEY_personal_site_claude=ann_additive_…
+#   OBSIDIAN_KEY_personal_site_codex=ann_additive_…
+#   OBSIDIAN_WATCH_KEY_personal_site_claude=ann_poll_…
 identities:
   obsidian: []
   watch: []
