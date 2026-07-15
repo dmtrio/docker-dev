@@ -194,9 +194,13 @@ done
 
 # ── Bootstrap workspace (idempotent) ──────────────────────────────────────────
 if [ -n "$REPO_URL" ]; then
-    docker exec -u coder "dev-agent-$NAME" bash -c \
+    # The bootstrap exec isn't shim-launched, so hand it the machine-user
+    # token explicitly for private-repo clones over HTTPS.
+    CLONE_ENV=""
+    [ -n "${GH_TOKEN:-}" ] && CLONE_ENV="-e GH_TOKEN=$GH_TOKEN"
+    docker exec $CLONE_ENV -u coder "dev-agent-$NAME" bash -c \
         "[ -d /workspace/main/.git ] || git clone '$REPO_URL' /workspace/main" \
-        || echo "WARNING: clone failed (private repo? clone manually inside)"
+        || echo "WARNING: clone failed — private repo needs either GH_TOKEN in secrets.env (machine user must have repo access) or a one-time 'gh auth login' in the container"
 else
     docker exec -u coder "dev-agent-$NAME" bash -c \
         "[ -d /workspace/main/.git ] || git init -b main /workspace/main"
