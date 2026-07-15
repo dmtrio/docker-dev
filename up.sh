@@ -46,8 +46,7 @@ GIT_USER_EMAIL=$(Y '.git.email'); GIT_USER_EMAIL="${GIT_USER_EMAIL:-$(git config
 MEM_LIMIT=$(Y '.memory'); MEM_LIMIT="${MEM_LIMIT:-2g}"
 
 case "$FORGE" in
-    github) FORGE_AUTH_PATH="$SHARED_PATH/gh";    FORGE_AUTH_MOUNT="/home/coder/.config/gh" ;;
-    gitea)  FORGE_AUTH_PATH="$SHARED_PATH/gitea"; FORGE_AUTH_MOUNT="/home/coder/.config/tea" ;;
+    github|gitea) ;; # informational; auth is per-container (GH_TOKEN or in-container login)
     *) echo "Error: forge must be github or gitea"; exit 1 ;;
 esac
 
@@ -154,7 +153,11 @@ for f in "$KEYS_PATH"/*.env; do [ -f "$f" ] && chmod 600 "$f"; done
 
 # ── Host paths + platform ─────────────────────────────────────────────────────
 ARTIFACTS_PATH="$BASE_PATH/artifacts/$NAME"
-mkdir -p "$ARTIFACTS_PATH" "$SHARED_PATH/claude" "$SHARED_PATH/codex" "$FORGE_AUTH_PATH"
+RULES_PATH="$BASE_PATH/rules"
+mkdir -p "$ARTIFACTS_PATH"
+[ -d "$RULES_PATH" ] || { echo "Error: $RULES_PATH missing — the global rules repo is required"; exit 1; }
+# Keep rules current if the repo has a remote (merged rule PRs land here)
+git -C "$RULES_PATH" pull --ff-only -q 2>/dev/null || true
 
 if [ "$(uname -s)" = "Linux" ]; then
     USER_UID="$(id -u)"; USER_GID="$(id -g)"
@@ -168,8 +171,7 @@ echo "  ports='${HOST_MCP_PORTS:-none}' egress='${EGRESS:-none}' mem=$MEM_LIMIT"
 
 CONTAINER_NAME="$NAME" \
 USER_UID="$USER_UID" USER_GID="$USER_GID" \
-SHARED_PATH="$SHARED_PATH" \
-FORGE_AUTH_PATH="$FORGE_AUTH_PATH" FORGE_AUTH_MOUNT="$FORGE_AUTH_MOUNT" \
+RULES_PATH="$RULES_PATH" \
 GIT_USER_NAME="$GIT_USER_NAME" GIT_USER_EMAIL="$GIT_USER_EMAIL" \
 INSTALL_CLAUDE="$INSTALL_CLAUDE" INSTALL_CODEX="$INSTALL_CODEX" \
 INSTALL_PI="$INSTALL_PI" INSTALL_GEMINI="$INSTALL_GEMINI" \
@@ -222,6 +224,27 @@ fi
 
 docker cp "$SCRIPT_DIR/workspace.CLAUDE.md" "dev-agent-$NAME:/workspace/CLAUDE.md"
 docker exec "dev-agent-$NAME" chown coder:coder /workspace/CLAUDE.md
+
+# ── Global rules fan-out (symlinks into the read-only /agent-rules mount) ────
+# One AGENTS.md source; each tool's global file points at it. Symlinks into
+# a mounted DIR survive host-side editor renames. Skills shared the same way.
+docker exec -u coder "dev-agent-$NAME" bash -c '
+mkdir -p /home/coder/.claude /home/coder/.codex /home/coder/.gemini
+ln -sfn /agent-rules/AGENTS.md /home/coder/.claude/CLAUDE.md
+ln -sfn /agent-rules/AGENTS.md /home/coder/.codex/AGENTS.md
+ln -sfn /agent-rules/AGENTS.md /home/coder/.gemini/GEMINI.md
+[ -e /home/coder/.claude/skills ] && [ ! -L /home/coder/.claude/skills ] || ln -sfn /agent-rules/skills /home/coder/.claude/skills
+if [ ! -f /workspace/rules.local.md ]; then
+cat > /workspace/rules.local.md <<EOF
+# rules.local.md — container-local rule overrides
+
+Rules that are global in spirit but specific to THIS project/container.
+Not committed (lives outside the repo). Loaded by all agents alongside
+/agent-rules/AGENTS.md. Precedence: repo rules > this file > global rules.
+EOF
+fi
+echo "  ✓ global rules + skills linked (read-only; changes go via PR to the rules repo)"
+'
 
 # ── Generate .mcp.json (Claude only; ${VAR} refs, values via shims) ──────────
 # Regenerated on every up UNLESS the repo brought its own (no marker file).

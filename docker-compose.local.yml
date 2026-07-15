@@ -67,10 +67,12 @@ services:
       # agent-identity shims at process start — changes apply on next launch.
       - ${KEYS_PATH}:/home/coder/.agent-keys:ro
 
-      # ── Shared across all containers ──────────────────────────────────────
-      - ${SHARED_PATH}/claude:/home/coder/.claude
-      - ${SHARED_PATH}/codex:/home/coder/.codex
-      - ${FORGE_AUTH_PATH}:${FORGE_AUTH_MOUNT}
+      # ── Shared knowledge, never shared identity ───────────────────────────
+      # Global rules + skills, read-only: host is the single writer; agents
+      # propose changes via PR to the rules repo (see AGENTS.md governance).
+      # Credentials (claude/codex/gh logins) are container-local by design —
+      # identity is scoped to the container.
+      - ${RULES_PATH}:/agent-rules:ro
 
     # Memory cap comes from the capability profile (coding needs headroom
     # for builds/tests; default stays lean)
