@@ -259,24 +259,45 @@ touch /workspace/.mcp.generated
 echo "  ✓ .mcp.json generated ($(echo "$J" | jq -r ".mcpServers | keys | join(\", \")"))"
 '
 
-# ── Cursor MCP config (only when cursor-agent has an obsidian identity) ─────
-# Cursor cannot expand env vars in headers for remote servers (documented
-# bug), so its config carries the literal key: container-local home file,
-# mode 600, never inside the repo, regenerated from secrets.env every up.
-CURSOR_OBS_KEY=""
+# ── Per-agent MCP configs beyond Claude ──────────────────────────────────────
+# Cursor and Gemini cannot reliably expand env vars in headers for remote
+# servers, so their configs carry the literal key: container-local home
+# files, mode 600, never inside the repo, regenerated from secrets.env on
+# every up (rotation flows). pi needs the pi-mcp-adapter extension for its
+# file to take effect. codex is SKIPPED: ~/.codex is a shared volume, so a
+# per-container identity written there would leak across containers.
 for ref in $OBS_REFS; do
-    if [ "$(agent_for_ref "$ref")" = "cursor-agent" ]; then
-        eval "CURSOR_OBS_KEY=\$OBSIDIAN_KEY_$ref"
-    fi
-done
-if [ -n "$CURSOR_OBS_KEY" ]; then
-    docker exec -u coder -e K="$CURSOR_OBS_KEY" "dev-agent-$NAME" bash -c '
+    a=$(agent_for_ref "$ref")
+    eval "v=\$OBSIDIAN_KEY_$ref"
+    case "$a" in
+        cursor-agent)
+            docker exec -u coder -e K="$v" "dev-agent-$NAME" bash -c '
 mkdir -p /home/coder/.cursor
 jq -n --arg k "$K" "{mcpServers: {\"obsidian-annotated\": {url: \"https://mcp-obsidian.dmetr.io/mcp\", headers: {Authorization: (\"Bearer \" + \$k)}}}}" > /home/coder/.cursor/mcp.json
 chmod 600 /home/coder/.cursor/mcp.json
-echo "  ✓ cursor mcp.json generated (obsidian-annotated, literal key — Cursor env interpolation is broken for remote headers)"
-'
+echo "  ✓ cursor-agent MCP config (literal key: env interpolation broken for remote headers)"' ;;
+        gemini)
+            docker exec -u coder -e K="$v" "dev-agent-$NAME" bash -c '
+mkdir -p /home/coder/.gemini
+if [ -f /home/coder/.gemini/settings.json ]; then
+  jq --arg k "$K" ".mcpServers[\"obsidian-annotated\"] = {httpUrl: \"https://mcp-obsidian.dmetr.io/mcp\", headers: {Authorization: (\"Bearer \" + \$k)}}" /home/coder/.gemini/settings.json > /tmp/g.json && mv /tmp/g.json /home/coder/.gemini/settings.json
+else
+  jq -n --arg k "$K" "{mcpServers: {\"obsidian-annotated\": {httpUrl: \"https://mcp-obsidian.dmetr.io/mcp\", headers: {Authorization: (\"Bearer \" + \$k)}}}}" > /home/coder/.gemini/settings.json
 fi
+chmod 600 /home/coder/.gemini/settings.json
+echo "  ✓ gemini MCP config (literal key: header env expansion is an open FR)"' ;;
+        pi)
+            docker exec -u coder -e K="$v" "dev-agent-$NAME" bash -c '
+mkdir -p /home/coder/.pi/agent
+jq -n --arg k "$K" "{mcpServers: {\"obsidian-annotated\": {type: \"http\", url: \"https://mcp-obsidian.dmetr.io/mcp\", headers: {Authorization: (\"Bearer \" + \$k)}}}}" > /home/coder/.pi/agent/mcp.json
+chmod 600 /home/coder/.pi/agent/mcp.json
+echo "  ✓ pi MCP config written (NOTE: inert until pi-mcp-adapter extension is installed — pi has no built-in MCP)"' ;;
+        codex)
+            echo "  ⚠ codex obsidian identity NOT wired into MCP config: ~/.codex is shared" \
+                 "across containers, so a per-container key there would leak. (Key still" \
+                 "available to codex processes as OBSIDIAN_ANNOTATED_KEY via its shim.)" ;;
+    esac
+done
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
