@@ -33,10 +33,9 @@ if [ -n "$GIT_USER_EMAIL" ]; then
     echo "✓ Git user.email: $GIT_USER_EMAIL"
 fi
 
-# ── MCP config ───────────────────────────────────────────────────────────────
-if [ -f /home/coder/.mcp.json ]; then
-    ln -sf /home/coder/.mcp.json /workspace/.mcp.json
-fi
+# (No /workspace/.mcp.json symlink: Claude Code reads .mcp.json only from
+# its start directory — the per-container config lives in /workspace/main
+# and is symlinked into each worktree per the workspace contract.)
 
 # ── Git safe directory ────────────────────────────────────────────────────────
 su -c "git config --global safe.directory /workspace" coder

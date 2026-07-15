@@ -19,6 +19,9 @@ them live in VS Code/Cursor, so visibility rules are not optional.
 
 - **Create** a worktree for each task/feature:
   `git -C /workspace/main worktree add ../worktrees/<name> -b <branch>`
+  then link the MCP config into it (Claude Code reads `.mcp.json` only from
+  its start directory — without this, MCP tools silently vanish in the
+  worktree): `ln -s ../../main/.mcp.json /workspace/worktrees/<name>/.mcp.json`
 - **Remove** it after the branch is merged or abandoned:
   `git -C /workspace/main worktree remove ../worktrees/<name> && git -C /workspace/main worktree prune`
 - **After every create or remove**, update `folders` in
