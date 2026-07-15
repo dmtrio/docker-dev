@@ -18,17 +18,18 @@ PROXYMAN_MCP="/Applications/Setapp/Proxyman.app/Contents/MacOS/mcp-server"
 [ -x "$PROXYMAN_MCP" ] || PROXYMAN_MCP="/Applications/Proxyman.app/Contents/MacOS/mcp-server"
 [ -x "$PROXYMAN_MCP" ] || { echo "ERROR: Proxyman mcp-server binary not found"; exit 1; }
 
-KEY_FILE="${DEV_AGENT_HOME:-$HOME/dev-agent}/secrets/proxyman-bridge.key"
-if [ ! -s "$KEY_FILE" ]; then
-    mkdir -p "$(dirname "$KEY_FILE")"
-    openssl rand -hex 24 > "$KEY_FILE"
-    chmod 600 "$KEY_FILE"
-    echo "Generated new bridge key at $KEY_FILE"
+SECRETS_FILE="${DEV_AGENT_HOME:-$HOME/dev-agent}/secrets.env"
+[ -f "$SECRETS_FILE" ] || { mkdir -p "$(dirname "$SECRETS_FILE")"; touch "$SECRETS_FILE"; chmod 600 "$SECRETS_FILE"; }
+. "$SECRETS_FILE"
+if [ -z "${PROXYMAN_BRIDGE_KEY:-}" ]; then
+    PROXYMAN_BRIDGE_KEY=$(openssl rand -hex 24)
+    echo "PROXYMAN_BRIDGE_KEY=$PROXYMAN_BRIDGE_KEY" >> "$SECRETS_FILE"
+    echo "Generated PROXYMAN_BRIDGE_KEY in $SECRETS_FILE"
 fi
 
 exec npx -y mcp-proxy \
     --host 127.0.0.1 \
     --port 8813 \
     --server stream \
-    --apiKey "$(cat "$KEY_FILE")" \
+    --apiKey "$PROXYMAN_BRIDGE_KEY" \
     -- "$PROXYMAN_MCP"

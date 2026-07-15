@@ -29,12 +29,13 @@ PROFILE_DIR="$BASE_PATH/research-browser"
 CDP_PORT=9222
 BRIDGE_PORT=8814
 
-KEY_FILE="$BASE_PATH/secrets/research-browser.key"
-if [ ! -s "$KEY_FILE" ]; then
-    mkdir -p "$(dirname "$KEY_FILE")"
-    openssl rand -hex 24 > "$KEY_FILE"
-    chmod 600 "$KEY_FILE"
-    echo "Generated new bridge key at $KEY_FILE"
+SECRETS_FILE="$BASE_PATH/secrets.env"
+[ -f "$SECRETS_FILE" ] || { mkdir -p "$(dirname "$SECRETS_FILE")"; touch "$SECRETS_FILE"; chmod 600 "$SECRETS_FILE"; }
+. "$SECRETS_FILE"
+if [ -z "${RESEARCH_BROWSER_KEY:-}" ]; then
+    RESEARCH_BROWSER_KEY=$(openssl rand -hex 24)
+    echo "RESEARCH_BROWSER_KEY=$RESEARCH_BROWSER_KEY" >> "$SECRETS_FILE"
+    echo "Generated RESEARCH_BROWSER_KEY in $SECRETS_FILE"
 fi
 
 # Start the browser if its CDP port isn't already up (idempotent).
@@ -61,5 +62,5 @@ exec npx -y mcp-proxy \
     --host 127.0.0.1 \
     --port $BRIDGE_PORT \
     --server stream \
-    --apiKey "$(cat "$KEY_FILE")" \
+    --apiKey "$RESEARCH_BROWSER_KEY" \
     -- npx -y chrome-devtools-mcp --browserUrl "http://127.0.0.1:$CDP_PORT"

@@ -1,0 +1,43 @@
+# containers/<name>.yml — one manifest = one container. The assembly is a config.
+#
+#   cp containers/TEMPLATE.yml containers/personal-site.yml   # filename = container name
+#   vim containers/personal-site.yml
+#   ./up.sh personal-site                                     # idempotent — rerun after edits
+#
+# Everything here is secret-free and committable. Secret VALUES live in
+# ~/dev-agent/secrets.env and are referenced by naming convention (below).
+# Derived state (keys/, the container, generated configs) is disposable:
+# up.sh rebuilds all of it from this file + secrets.env.
+
+task: coding                       # label: coding | research | ... (informational)
+repo: ""                           # https URL cloned to /workspace/main (blank = git init)
+forge: github                      # github | gitea
+
+git:
+  name: ""                         # blank = your host git config
+  email: ""
+
+memory: 10g
+
+# Agent CLIs baked into the image. Omit this key entirely = all of them.
+tools: [claude, codex, pi, gemini, cursor, aider]
+
+# Capability grants. Each maps to a Mac-side service port, its secret in
+# secrets.env, the firewall rule, and a generated MCP entry for Claude Code.
+#   gateway  → 8811, MCP_GATEWAY_TOKEN     (run-gateway-coding.sh — headless Playwright)
+#   proxyman → 8813, PROXYMAN_BRIDGE_KEY   (run-proxyman-bridge.sh — traffic capture)
+#   browser  → 8814, RESEARCH_BROWSER_KEY  (run-research-browser.sh — watchable desktop browser)
+capabilities:
+  gateway: false
+  proxyman: false
+  browser: false
+  egress: []                       # extra allowed outbound domains, e.g. [api.stripe.com]
+
+# Per-agent identities (agent = binary name: claude, codex, pi, gemini, cursor-agent).
+# Values come from secrets.env by convention (dashes become underscores):
+#   obsidian: OBSIDIAN_KEY_<name>_<agent>        → OBSIDIAN_ANNOTATED_KEY
+#   watch:    OBSIDIAN_WATCH_KEY_<name>_<agent>  → ANNOTATED_WATCH_KEY
+# Listing an agent under obsidian also allowlists the Annotated endpoint.
+identities:
+  obsidian: []
+  watch: []
