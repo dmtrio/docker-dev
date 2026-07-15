@@ -64,6 +64,7 @@ CAP_GATEWAY=$(yq '.capabilities.gateway // false' "$MANIFEST")
 CAP_PROXYMAN=$(yq '.capabilities.proxyman // false' "$MANIFEST")
 CAP_BROWSER=$(yq '.capabilities.browser // false' "$MANIFEST")
 EGRESS=$(yq -r '(.capabilities.egress // []) | join(",")' "$MANIFEST")
+EGRESS_CIDRS=$(yq -r '(.capabilities.egress_cidrs // []) | join(",")' "$MANIFEST")
 OBS_REFS=$(yq -r '(.identities.obsidian // []) | join(" ")' "$MANIFEST")
 WATCH_REFS=$(yq -r '(.identities.watch // []) | join(" ")' "$MANIFEST")
 
@@ -179,6 +180,7 @@ INSTALL_CLAUDE="$INSTALL_CLAUDE" INSTALL_CODEX="$INSTALL_CODEX" \
 INSTALL_PI="$INSTALL_PI" INSTALL_GEMINI="$INSTALL_GEMINI" \
 INSTALL_CURSOR="$INSTALL_CURSOR" INSTALL_AIDER="$INSTALL_AIDER" \
 HOST_MCP_PORTS="$HOST_MCP_PORTS" EXTRA_ALLOWED_DOMAINS="$EGRESS" \
+ALLOWED_CIDRS="$EGRESS_CIDRS" \
 KEYS_PATH="$KEYS_PATH" ARTIFACTS_PATH="$ARTIFACTS_PATH" MEM_LIMIT="$MEM_LIMIT" \
 docker compose -p "dev-agent-$NAME" -f "$SCRIPT_DIR/docker-compose.local.yml" up -d --build
 

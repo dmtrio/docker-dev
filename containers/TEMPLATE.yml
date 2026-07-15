@@ -32,6 +32,8 @@ capabilities:
   proxyman: false
   browser: false
   egress: []                       # extra allowed outbound domains, e.g. [api.stripe.com]
+  egress_cidrs: []                 # IP-range escape hatch, e.g. LAN subnets:
+                                   #   [192.168.35.0/24, 192.168.20.0/24]
 
 # Per-agent identities — EXPLICIT references to secrets.env names.
 # An entry R reads OBSIDIAN_KEY_R (obsidian) or OBSIDIAN_WATCH_KEY_R (watch);

@@ -48,6 +48,8 @@ services:
       - HOST_MCP_PORTS=${HOST_MCP_PORTS:-}
       # Extra egress allowlist domains (comma-separated), per project.
       - EXTRA_ALLOWED_DOMAINS=${EXTRA_ALLOWED_DOMAINS:-}
+      # CIDR escape hatch (comma-separated), e.g. LAN subnets.
+      - ALLOWED_CIDRS=${ALLOWED_CIDRS:-}
       # MCP credentials are NOT container env — they load per agent at
       # process start from the mounted ~/.agent-keys dir (see volumes).
 

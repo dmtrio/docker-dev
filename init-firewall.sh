@@ -89,6 +89,12 @@ api.anthropic.com
 console.anthropic.com
 claude.ai
 pi.dev
+api.pi.dev
+generativelanguage.googleapis.com
+cloudcode-pa.googleapis.com
+oauth2.googleapis.com
+accounts.google.com
+www.googleapis.com
 api.openai.com
 auth.openai.com
 chatgpt.com
@@ -139,6 +145,20 @@ for domain in $ALLOWED_DOMAINS; do
         ipset add allowed-domains "$ip" 2>/dev/null || true
     done < <(echo "$ips")
 done
+
+# Per-container CIDR escape hatch (e.g. LAN subnets for homelab services).
+# hash:net ipsets take CIDRs directly — no DNS involved.
+if [ -n "${ALLOWED_CIDRS:-}" ]; then
+    for cidr in $(echo "$ALLOWED_CIDRS" | tr ', ' '\n\n'); do
+        [ -z "$cidr" ] && continue
+        if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+            echo "ERROR: Invalid CIDR in ALLOWED_CIDRS: $cidr"
+            exit 1
+        fi
+        echo "Allowing CIDR $cidr"
+        ipset add allowed-domains "$cidr"
+    done
+fi
 
 # Get host IP from default route
 HOST_IP=$(ip route | grep default | cut -d" " -f3)
