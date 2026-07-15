@@ -4,11 +4,36 @@
 # Universal: macOS (Docker Desktop / OrbStack) and plain Linux Docker Engine.
 # Bash 3.2 compatible (macOS default shell).
 #
-# Usage: ./new-local-container.sh
+# Usage: ./new-local-container.sh [profile]
+#   profile = a capability bundle from profiles/*.env (default, coding, ...)
+#             defining host MCP ports, egress domains, and key prompts.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# ── Capability profile ────────────────────────────────────────────────────────
+PROFILE="${1:-}"
+if [ -z "$PROFILE" ]; then
+    echo "Capability profiles:"
+    for f in "$SCRIPT_DIR/profiles"/*.env; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f" .env)
+        desc=$(sed -n '2s/^# *//p' "$f")
+        printf "  %-12s %s\n" "$name" "$desc"
+    done
+    printf "Choose profile [default]: "
+    read PROFILE
+    PROFILE="${PROFILE:-default}"
+fi
+
+PROFILE_FILE="$SCRIPT_DIR/profiles/$PROFILE.env"
+if [ ! -f "$PROFILE_FILE" ]; then
+    echo "Error: unknown profile '$PROFILE' (no $PROFILE_FILE)"
+    exit 1
+fi
+. "$PROFILE_FILE"
+echo "Profile '$PROFILE': ports='${HOST_MCP_PORTS:-none}' domains='${EXTRA_ALLOWED_DOMAINS:-none}'"
 
 BASE_PATH="${DEV_AGENT_HOME:-$HOME/dev-agent}"
 SHARED_PATH="$BASE_PATH/shared"
@@ -77,30 +102,7 @@ printf "Git user.email [%s]: " "$DEFAULT_EMAIL"
 read GIT_USER_EMAIL
 GIT_USER_EMAIL="${GIT_USER_EMAIL:-$DEFAULT_EMAIL}"
 
-# ── AI tools ─────────────────────────────────────────────────────────────────
-echo "AI tools to install:"
-printf "  Claude Code?   [Y/n]: "
-read INSTALL_CLAUDE
-printf "  pi?            [Y/n]: "
-read INSTALL_PI
-printf "  Gemini CLI?    [Y/n]: "
-read INSTALL_GEMINI
-printf "  Cursor agent?  [Y/n]: "
-read INSTALL_CURSOR
-printf "  Aider?         [Y/n]: "
-read INSTALL_AIDER
-
-case "${INSTALL_CLAUDE:-y}" in [Nn]*) INSTALL_CLAUDE=false ;; *) INSTALL_CLAUDE=true ;; esac
-case "${INSTALL_PI:-y}"     in [Nn]*) INSTALL_PI=false     ;; *) INSTALL_PI=true     ;; esac
-case "${INSTALL_GEMINI:-y}" in [Nn]*) INSTALL_GEMINI=false ;; *) INSTALL_GEMINI=true ;; esac
-case "${INSTALL_CURSOR:-y}" in [Nn]*) INSTALL_CURSOR=false ;; *) INSTALL_CURSOR=true ;; esac
-case "${INSTALL_AIDER:-y}"  in [Nn]*) INSTALL_AIDER=false  ;; *) INSTALL_AIDER=true  ;; esac
-
-# ── Host MCP + extra egress (per RFC 03: opt-in, default closed) ─────────────
-printf "Host MCP ports (comma-separated, blank = host unreachable): "
-read HOST_MCP_PORTS
-printf "Extra allowed egress domains (comma-separated, blank = none): "
-read EXTRA_ALLOWED_DOMAINS
+# AI tools, host MCP ports, and egress domains come from the profile.
 
 # ── Per-agent MCP credentials (mounted at ~/.agent-keys, loaded by shims) ───
 # common.env holds capability tokens shared by every agent in this container
@@ -129,14 +131,17 @@ if echo ",$HOST_MCP_PORTS," | grep -q ",8813,"; then
 fi
 chmod 600 "$KEYS_PATH/common.env"
 
-printf "Obsidian Annotated scoped key for the claude agent (blank = none): "
-read -s CLAUDE_OBSIDIAN_KEY
-echo ""
 HAS_OBSIDIAN=false
-if [ -n "$CLAUDE_OBSIDIAN_KEY" ]; then
-    echo "OBSIDIAN_ANNOTATED_KEY=$CLAUDE_OBSIDIAN_KEY" > "$KEYS_PATH/claude.env"
-    chmod 600 "$KEYS_PATH/claude.env"
-    HAS_OBSIDIAN=true
+if [ "${PROMPT_OBSIDIAN_KEY:-false}" = "true" ]; then
+    printf "Obsidian Annotated scoped key for the claude agent (blank = none): "
+    read -s CLAUDE_OBSIDIAN_KEY
+    echo ""
+    if [ -n "$CLAUDE_OBSIDIAN_KEY" ]; then
+        echo "OBSIDIAN_ANNOTATED_KEY=$CLAUDE_OBSIDIAN_KEY" > "$KEYS_PATH/claude.env"
+        chmod 600 "$KEYS_PATH/claude.env"
+        HAS_OBSIDIAN=true
+    fi
+    echo "(other agents: ./update-agent-keys.sh $CONTAINER_NAME pi OBSIDIAN_ANNOTATED_KEY ...)"
 fi
 
 # ── Ensure shared dirs exist ──────────────────────────────────────────────────
@@ -242,6 +247,7 @@ echo "✓ .mcp.json generated ($(echo "$J" | jq -r ".mcpServers | keys | join(\"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Container:  dev-agent-$CONTAINER_NAME"
+echo "  Profile:    $PROFILE"
 echo "  Forge:      $FORGE"
 echo "  Firewall:   on (HOST_MCP_PORTS='${HOST_MCP_PORTS:-none}')"
 echo ""
