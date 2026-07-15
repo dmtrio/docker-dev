@@ -316,9 +316,10 @@ jq -n --arg k "$K" "{mcpServers: {\"obsidian-annotated\": {type: \"http\", url: 
 chmod 600 /home/coder/.pi/agent/mcp.json
 echo "  ✓ pi MCP config written (NOTE: inert until pi-mcp-adapter extension is installed — pi has no built-in MCP)"' ;;
         codex)
-            echo "  ⚠ codex obsidian identity NOT wired into MCP config: ~/.codex is shared" \
-                 "across containers, so a per-container key there would leak. (Key still" \
-                 "available to codex processes as OBSIDIAN_ANNOTATED_KEY via its shim.)" ;;
+            echo "  ⚠ codex obsidian identity not yet wired into ~/.codex/config.toml" \
+                 "(now safely container-local after the credential split — pending" \
+                 "verification of codex's remote-MCP config format). Key is available" \
+                 "to codex processes as OBSIDIAN_ANNOTATED_KEY via its shim." ;;
     esac
 done
 
