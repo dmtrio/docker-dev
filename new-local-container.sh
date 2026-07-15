@@ -135,6 +135,13 @@ if echo ",$HOST_MCP_PORTS," | grep -q ",8814,"; then
     [ -n "$TOK" ] && echo "RESEARCH_BROWSER_KEY=$TOK" >> "$KEYS_PATH/common.env" \
         || echo "WARNING: port 8814 granted but $SECRETS_PATH/research-browser.key missing (run run-research-browser.sh once)"
 fi
+# Optional GitHub PAT (fine-grained: push non-main + PRs only). GH_TOKEN
+# outranks the mounted gh config; capability is per-token, but identity is
+# always the account — per-agent attribution comes from GIT_AUTHOR_* vars
+# in each agent's env file instead.
+if [ -s "$SECRETS_PATH/github.token" ]; then
+    echo "GH_TOKEN=$(cat "$SECRETS_PATH/github.token")" >> "$KEYS_PATH/common.env"
+fi
 chmod 600 "$KEYS_PATH/common.env"
 
 HAS_OBSIDIAN=false
