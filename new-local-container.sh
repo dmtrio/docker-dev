@@ -129,6 +129,11 @@ if echo ",$HOST_MCP_PORTS," | grep -q ",8813,"; then
     [ -n "$TOK" ] && echo "PROXYMAN_BRIDGE_KEY=$TOK" >> "$KEYS_PATH/common.env" \
         || echo "WARNING: port 8813 granted but $SHARED_PATH/proxyman-bridge.key missing"
 fi
+if echo ",$HOST_MCP_PORTS," | grep -q ",8814,"; then
+    TOK="$(cat "$SHARED_PATH/research-browser.key" 2>/dev/null || true)"
+    [ -n "$TOK" ] && echo "RESEARCH_BROWSER_KEY=$TOK" >> "$KEYS_PATH/common.env" \
+        || echo "WARNING: port 8814 granted but $SHARED_PATH/research-browser.key missing (run run-research-browser.sh once)"
+fi
 chmod 600 "$KEYS_PATH/common.env"
 
 HAS_OBSIDIAN=false
@@ -221,12 +226,13 @@ docker exec "dev-agent-$CONTAINER_NAME" chown coder:coder /workspace/CLAUDE.md
 # ── Generate .mcp.json (Claude Code only; secrets stay as ${VAR} refs) ───────
 # Entries are included only for capabilities this container was granted;
 # the shims supply the actual values per agent at process start.
-WANT_GATEWAY=false; WANT_PROXYMAN=false
+WANT_GATEWAY=false; WANT_PROXYMAN=false; WANT_BROWSER=false
 echo ",$HOST_MCP_PORTS," | grep -q ",8811," && WANT_GATEWAY=true
 echo ",$HOST_MCP_PORTS," | grep -q ",8813," && WANT_PROXYMAN=true
+echo ",$HOST_MCP_PORTS," | grep -q ",8814," && WANT_BROWSER=true
 
 docker exec -u coder \
-    -e WANT_GATEWAY="$WANT_GATEWAY" -e WANT_PROXYMAN="$WANT_PROXYMAN" -e WANT_OBSIDIAN="$HAS_OBSIDIAN" \
+    -e WANT_GATEWAY="$WANT_GATEWAY" -e WANT_PROXYMAN="$WANT_PROXYMAN" -e WANT_BROWSER="$WANT_BROWSER" -e WANT_OBSIDIAN="$HAS_OBSIDIAN" \
     "dev-agent-$CONTAINER_NAME" bash -c '
 [ -f /workspace/main/.mcp.json ] && exit 0
 J="{\"mcpServers\":{}}"
@@ -235,6 +241,9 @@ if [ "$WANT_GATEWAY" = "true" ]; then
 fi
 if [ "$WANT_PROXYMAN" = "true" ]; then
   J=$(echo "$J" | jq ".mcpServers.proxyman = {type:\"http\",url:\"http://host.docker.internal:8813/mcp\",headers:{\"X-API-Key\":\"\${PROXYMAN_BRIDGE_KEY}\"}}")
+fi
+if [ "$WANT_BROWSER" = "true" ]; then
+  J=$(echo "$J" | jq ".mcpServers.browser = {type:\"http\",url:\"http://host.docker.internal:8814/mcp\",headers:{\"X-API-Key\":\"\${RESEARCH_BROWSER_KEY}\"}}")
 fi
 if [ "$WANT_OBSIDIAN" = "true" ]; then
   J=$(echo "$J" | jq ".mcpServers.\"obsidian-annotated\" = {type:\"http\",url:\"https://mcp-obsidian.dmetr.io/mcp\",headers:{Authorization:\"Bearer \${OBSIDIAN_ANNOTATED_KEY}\"}}")
