@@ -259,6 +259,25 @@ touch /workspace/.mcp.generated
 echo "  ✓ .mcp.json generated ($(echo "$J" | jq -r ".mcpServers | keys | join(\", \")"))"
 '
 
+# ── Cursor MCP config (only when cursor-agent has an obsidian identity) ─────
+# Cursor cannot expand env vars in headers for remote servers (documented
+# bug), so its config carries the literal key: container-local home file,
+# mode 600, never inside the repo, regenerated from secrets.env every up.
+CURSOR_OBS_KEY=""
+for ref in $OBS_REFS; do
+    if [ "$(agent_for_ref "$ref")" = "cursor-agent" ]; then
+        eval "CURSOR_OBS_KEY=\$OBSIDIAN_KEY_$ref"
+    fi
+done
+if [ -n "$CURSOR_OBS_KEY" ]; then
+    docker exec -u coder -e K="$CURSOR_OBS_KEY" "dev-agent-$NAME" bash -c '
+mkdir -p /home/coder/.cursor
+jq -n --arg k "$K" "{mcpServers: {\"obsidian-annotated\": {url: \"https://mcp-obsidian.dmetr.io/mcp\", headers: {Authorization: (\"Bearer \" + \$k)}}}}" > /home/coder/.cursor/mcp.json
+chmod 600 /home/coder/.cursor/mcp.json
+echo "  ✓ cursor mcp.json generated (obsidian-annotated, literal key — Cursor env interpolation is broken for remote headers)"
+'
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  dev-agent-$NAME is up (manifest: containers/$NAME.yml)"
