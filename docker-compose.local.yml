@@ -47,16 +47,19 @@ services:
       - HOST_MCP_PORTS=${HOST_MCP_PORTS:-}
       # Extra egress allowlist domains (comma-separated), per project.
       - EXTRA_ALLOWED_DOMAINS=${EXTRA_ALLOWED_DOMAINS:-}
-      # MCP credentials — referenced from .mcp.json as ${VAR} so the config
-      # file itself stays free of secrets (and safe to commit).
-      - MCP_GATEWAY_TOKEN=${MCP_GATEWAY_TOKEN:-}
-      - PROXYMAN_BRIDGE_KEY=${PROXYMAN_BRIDGE_KEY:-}
-      - OBSIDIAN_ANNOTATED_KEY=${OBSIDIAN_ANNOTATED_KEY:-}
+      # MCP credentials are NOT container env — they load per agent at
+      # process start from the mounted ~/.agent-keys dir (see volumes).
 
     volumes:
       # ── Project workspace: named volume, repo cloned inside ───────────────
       # (compose project name prefixes this, so each container gets its own)
       - workspace:/workspace
+
+      # ── Per-agent MCP credentials (edit host-side, live in container) ─────
+      # <keys>/common.env = capability tokens (gateway, bridges);
+      # <keys>/<agent>.env = that agent's identity keys. Loaded by the
+      # agent-identity shims at process start — changes apply on next launch.
+      - ${KEYS_PATH}:/home/coder/.agent-keys:ro
 
       # ── Shared across all containers ──────────────────────────────────────
       - ${SHARED_PATH}/claude:/home/coder/.claude

@@ -102,36 +102,38 @@ read HOST_MCP_PORTS
 printf "Extra allowed egress domains (comma-separated, blank = none): "
 read EXTRA_ALLOWED_DOMAINS
 
-# ── MCP credentials (env-injected; .mcp.json only holds \${VAR} references) ──
-# Gateway/bridge keys auto-load from shared token files when their port is
-# granted. The Obsidian Annotated key is per-container (its scope IS the
-# container's identity) — prompted, optional.
-MCP_GATEWAY_TOKEN=""
-PROXYMAN_BRIDGE_KEY=""
-OBSIDIAN_ANNOTATED_KEY=""
+# ── Per-agent MCP credentials (mounted at ~/.agent-keys, loaded by shims) ───
+# common.env holds capability tokens shared by every agent in this container
+# (gateway, bridges — auto-loaded when their port is granted). <agent>.env
+# holds that agent's identity keys (e.g. its own Obsidian Annotated scoped
+# key, for attribution). Update later with update-agent-keys.sh — takes
+# effect on the agent's next start, no container restart needed.
+KEYS_PATH="$BASE_PATH/keys/$CONTAINER_NAME"
+mkdir -p "$KEYS_PATH"
+chmod 700 "$KEYS_PATH"
+
+: > "$KEYS_PATH/common.env"
 if echo ",$HOST_MCP_PORTS," | grep -q ",8811,"; then
-    MCP_GATEWAY_TOKEN="$(cat "$SHARED_PATH/gateway-coding.token" 2>/dev/null || true)"
-    [ -z "$MCP_GATEWAY_TOKEN" ] && echo "WARNING: port 8811 granted but $SHARED_PATH/gateway-coding.token missing"
+    TOK="$(cat "$SHARED_PATH/gateway-coding.token" 2>/dev/null || true)"
+    [ -n "$TOK" ] && echo "MCP_GATEWAY_TOKEN=$TOK" >> "$KEYS_PATH/common.env" \
+        || echo "WARNING: port 8811 granted but $SHARED_PATH/gateway-coding.token missing"
 fi
 if echo ",$HOST_MCP_PORTS," | grep -q ",8813,"; then
-    PROXYMAN_BRIDGE_KEY="$(cat "$SHARED_PATH/proxyman-bridge.key" 2>/dev/null || true)"
-    [ -z "$PROXYMAN_BRIDGE_KEY" ] && echo "WARNING: port 8813 granted but $SHARED_PATH/proxyman-bridge.key missing"
+    TOK="$(cat "$SHARED_PATH/proxyman-bridge.key" 2>/dev/null || true)"
+    [ -n "$TOK" ] && echo "PROXYMAN_BRIDGE_KEY=$TOK" >> "$KEYS_PATH/common.env" \
+        || echo "WARNING: port 8813 granted but $SHARED_PATH/proxyman-bridge.key missing"
 fi
-printf "Obsidian Annotated scoped key (blank = no Obsidian access): "
-read -s OBSIDIAN_ANNOTATED_KEY
-echo ""
+chmod 600 "$KEYS_PATH/common.env"
 
-# Persist per-container keys so the container can be recreated outside this
-# script (source this file, then docker compose up)
-KEYS_DIR="$BASE_PATH/keys"
-mkdir -p "$KEYS_DIR"
-KEYS_FILE="$KEYS_DIR/$CONTAINER_NAME.env"
-{
-    echo "export MCP_GATEWAY_TOKEN='$MCP_GATEWAY_TOKEN'"
-    echo "export PROXYMAN_BRIDGE_KEY='$PROXYMAN_BRIDGE_KEY'"
-    echo "export OBSIDIAN_ANNOTATED_KEY='$OBSIDIAN_ANNOTATED_KEY'"
-} > "$KEYS_FILE"
-chmod 600 "$KEYS_FILE"
+printf "Obsidian Annotated scoped key for the claude agent (blank = none): "
+read -s CLAUDE_OBSIDIAN_KEY
+echo ""
+HAS_OBSIDIAN=false
+if [ -n "$CLAUDE_OBSIDIAN_KEY" ]; then
+    echo "OBSIDIAN_ANNOTATED_KEY=$CLAUDE_OBSIDIAN_KEY" > "$KEYS_PATH/claude.env"
+    chmod 600 "$KEYS_PATH/claude.env"
+    HAS_OBSIDIAN=true
+fi
 
 # ── Ensure shared dirs exist ──────────────────────────────────────────────────
 mkdir -p "$SHARED_PATH/claude" "$FORGE_AUTH_PATH"
@@ -157,9 +159,7 @@ INSTALL_CURSOR="$INSTALL_CURSOR" \
 INSTALL_AIDER="$INSTALL_AIDER" \
 HOST_MCP_PORTS="$HOST_MCP_PORTS" \
 EXTRA_ALLOWED_DOMAINS="$EXTRA_ALLOWED_DOMAINS" \
-MCP_GATEWAY_TOKEN="$MCP_GATEWAY_TOKEN" \
-PROXYMAN_BRIDGE_KEY="$PROXYMAN_BRIDGE_KEY" \
-OBSIDIAN_ANNOTATED_KEY="$OBSIDIAN_ANNOTATED_KEY" \
+KEYS_PATH="$KEYS_PATH" \
 docker compose -p "dev-agent-$CONTAINER_NAME" -f "$SCRIPT_DIR/docker-compose.local.yml" up -d --build
 
 # ── Wait for firewall/entrypoint to settle ────────────────────────────────────
@@ -208,18 +208,25 @@ fi
 docker cp "$SCRIPT_DIR/workspace.CLAUDE.md" "dev-agent-$CONTAINER_NAME:/workspace/CLAUDE.md"
 docker exec "dev-agent-$CONTAINER_NAME" chown coder:coder /workspace/CLAUDE.md
 
-# ── Generate .mcp.json (Claude Code only; secrets stay in env as ${VAR}) ─────
-# Entries are included only for credentials this container actually has.
-docker exec -u coder "dev-agent-$CONTAINER_NAME" bash -c '
+# ── Generate .mcp.json (Claude Code only; secrets stay as ${VAR} refs) ───────
+# Entries are included only for capabilities this container was granted;
+# the shims supply the actual values per agent at process start.
+WANT_GATEWAY=false; WANT_PROXYMAN=false
+echo ",$HOST_MCP_PORTS," | grep -q ",8811," && WANT_GATEWAY=true
+echo ",$HOST_MCP_PORTS," | grep -q ",8813," && WANT_PROXYMAN=true
+
+docker exec -u coder \
+    -e WANT_GATEWAY="$WANT_GATEWAY" -e WANT_PROXYMAN="$WANT_PROXYMAN" -e WANT_OBSIDIAN="$HAS_OBSIDIAN" \
+    "dev-agent-$CONTAINER_NAME" bash -c '
 [ -f /workspace/main/.mcp.json ] && exit 0
 J="{\"mcpServers\":{}}"
-if [ -n "$MCP_GATEWAY_TOKEN" ]; then
+if [ "$WANT_GATEWAY" = "true" ]; then
   J=$(echo "$J" | jq ".mcpServers.coding = {type:\"http\",url:\"http://host.docker.internal:8811/mcp\",headers:{Authorization:\"Bearer \${MCP_GATEWAY_TOKEN}\"}}")
 fi
-if [ -n "$PROXYMAN_BRIDGE_KEY" ]; then
+if [ "$WANT_PROXYMAN" = "true" ]; then
   J=$(echo "$J" | jq ".mcpServers.proxyman = {type:\"http\",url:\"http://host.docker.internal:8813/mcp\",headers:{\"X-API-Key\":\"\${PROXYMAN_BRIDGE_KEY}\"}}")
 fi
-if [ -n "$OBSIDIAN_ANNOTATED_KEY" ]; then
+if [ "$WANT_OBSIDIAN" = "true" ]; then
   J=$(echo "$J" | jq ".mcpServers.\"obsidian-annotated\" = {type:\"http\",url:\"https://mcp-obsidian.dmetr.io/mcp\",headers:{Authorization:\"Bearer \${OBSIDIAN_ANNOTATED_KEY}\"}}")
 fi
 echo "$J" | jq . > /workspace/main/.mcp.json
