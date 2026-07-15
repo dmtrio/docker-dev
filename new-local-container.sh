@@ -112,6 +112,10 @@ KEYS_PATH="$BASE_PATH/keys/$CONTAINER_NAME"
 mkdir -p "$KEYS_PATH"
 chmod 700 "$KEYS_PATH"
 
+# Artifacts outbox — survives all container/volume destruction, Mac-browsable
+ARTIFACTS_PATH="$BASE_PATH/artifacts/$CONTAINER_NAME"
+mkdir -p "$ARTIFACTS_PATH"
+
 : > "$KEYS_PATH/common.env"
 if echo ",$HOST_MCP_PORTS," | grep -q ",8811,"; then
     TOK="$(cat "$SHARED_PATH/gateway-coding.token" 2>/dev/null || true)"
@@ -160,6 +164,7 @@ INSTALL_AIDER="$INSTALL_AIDER" \
 HOST_MCP_PORTS="$HOST_MCP_PORTS" \
 EXTRA_ALLOWED_DOMAINS="$EXTRA_ALLOWED_DOMAINS" \
 KEYS_PATH="$KEYS_PATH" \
+ARTIFACTS_PATH="$ARTIFACTS_PATH" \
 docker compose -p "dev-agent-$CONTAINER_NAME" -f "$SCRIPT_DIR/docker-compose.local.yml" up -d --build
 
 # ── Wait for firewall/entrypoint to settle ────────────────────────────────────

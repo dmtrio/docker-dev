@@ -55,6 +55,11 @@ services:
       # (compose project name prefixes this, so each container gets its own)
       - workspace:/workspace
 
+      # ── Artifacts outbox: survives container/volume destruction ───────────
+      # Mac-browsable. For agent OUTPUTS that aren't code: screenshots,
+      # reports, exports, progress notes. Code still exits via git only.
+      - ${ARTIFACTS_PATH}:/artifacts
+
       # ── Per-agent MCP credentials (edit host-side, live in container) ─────
       # <keys>/common.env = capability tokens (gateway, bridges);
       # <keys>/<agent>.env = that agent's identity keys. Loaded by the

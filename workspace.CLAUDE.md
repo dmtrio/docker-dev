@@ -36,6 +36,14 @@ them live in VS Code/Cursor, so visibility rules are not optional.
   in a worktree, pushed with a PR (`gh pr create` or `tea pr create`).
 - Treat `main/` as read-mostly: pull/fetch there, develop in worktrees.
 
+## Artifacts outbox — `/artifacts`
+
+`/artifacts` is bind-mounted to the user's Mac and survives container and
+volume destruction. Put agent **outputs that aren't code** there: screenshots,
+test reports, exports, diagrams, and progress notes (`/artifacts/progress.md`)
+you want to outlive this container. The user can open these in Finder
+directly. Code never goes there — code exits via git PR only.
+
 ## Environment notes
 
 - Egress is firewalled to an allowlist (GitHub, npm, PyPI, Anthropic, apt,
