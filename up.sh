@@ -232,6 +232,11 @@ docker exec -u coder \
     -e WANT_GATEWAY="$CAP_GATEWAY" -e WANT_PROXYMAN="$CAP_PROXYMAN" \
     -e WANT_BROWSER="$CAP_BROWSER" -e WANT_OBSIDIAN="$HAS_OBSIDIAN" \
     "dev-agent-$NAME" bash -c '
+set -e
+if [ ! -d /workspace/main ]; then
+    echo "  (skipping .mcp.json — /workspace/main missing; fix the clone and rerun up.sh)"
+    exit 0
+fi
 if [ -f /workspace/main/.mcp.json ] && [ ! -f /workspace/.mcp.generated ]; then
     echo "  (repo ships its own .mcp.json — leaving it alone)"
     exit 0
