@@ -40,6 +40,11 @@ fi
 # ── Git safe directory ────────────────────────────────────────────────────────
 su -c "git config --global safe.directory /workspace" coder
 
+# ── Git over HTTPS via gh credential helper ──────────────────────────────────
+# One credential lane for both API and git transport: agents present
+# GH_TOKEN (shim env), humans fall back to the shared gh login. No SSH keys.
+su -c "git config --global credential.'https://github.com'.helper '!gh auth git-credential'" coder
+
 # ── SSH mode vs attach mode ───────────────────────────────────────────────────
 if [ "$SSH_ENABLED" = "true" ]; then
     # SSH host keys
