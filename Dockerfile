@@ -160,6 +160,10 @@ RUN if [ "$INSTALL_SSH" = "true" ]; then \
 
 ENV SSH_ENABLED=$INSTALL_SSH
 
+# VS Code / Cursor "Attach to Running Container" reads this: attach as
+# coder (not root) and open /workspace by default.
+LABEL devcontainer.metadata='{"remoteUser":"coder","workspaceFolder":"/workspace"}'
+
 EXPOSE 22
 
 ENTRYPOINT ["/home/coder/entrypoint.sh"]

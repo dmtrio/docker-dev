@@ -75,7 +75,7 @@ else
     echo "    Dev Containers: Attach to Running Container → dev-agent-${CONTAINER_NAME}"
     echo "    then open /workspace (or /workspace/dev.code-workspace)"
     echo ""
-    echo "  Terminal:   docker exec -it dev-agent-${CONTAINER_NAME} bash"
+    echo "  Terminal:   docker exec -it -u coder dev-agent-${CONTAINER_NAME} bash"
     echo "  Workspace:  /workspace"
     echo ""
     echo "  Dev servers: use VS Code port forwarding, or publish ports at launch"
