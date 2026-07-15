@@ -156,6 +156,8 @@ ARTIFACTS_PATH="$BASE_PATH/artifacts/$NAME"
 RULES_PATH="$BASE_PATH/rules"
 mkdir -p "$ARTIFACTS_PATH"
 [ -d "$RULES_PATH" ] || { echo "Error: $RULES_PATH missing — the global rules repo is required"; exit 1; }
+# Resolve symlinks: Docker Desktop cannot use a symlink as a bind source
+RULES_PATH="$(cd "$RULES_PATH" && pwd -P)"
 # Keep rules current if the repo has a remote (merged rule PRs land here)
 git -C "$RULES_PATH" pull --ff-only -q 2>/dev/null || true
 
