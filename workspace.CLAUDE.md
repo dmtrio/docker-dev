@@ -47,6 +47,17 @@ test reports, exports, diagrams, and progress notes (`/artifacts/progress.md`)
 you want to outlive this container. The user can open these in Finder
 directly. Code never goes there — code exits via git PR only.
 
+## Browser MCP (research containers)
+
+The `browser` MCP server does not run a browser in this container — it
+remote-controls a real browser window on the user's desktop (so they can
+watch you work). Consequences:
+- Never conclude "no browser is installed" and never try to install one.
+- If a browser tool fails to connect, the desktop browser or its bridge is
+  down: STOP and tell the user to run `run-research-browser.sh` on the host.
+- The user can see every page you open. They may interact with the window;
+  re-snapshot rather than assuming state.
+
 ## Environment notes
 
 - Egress is firewalled to an allowlist (GitHub, npm, PyPI, Anthropic, apt,
