@@ -17,6 +17,7 @@ services:
         INSTALL_PI: "${INSTALL_PI:-true}"
         INSTALL_GEMINI: "${INSTALL_GEMINI:-true}"
         INSTALL_CURSOR: "${INSTALL_CURSOR:-true}"
+        INSTALL_AIDER: "${INSTALL_AIDER:-true}"
     # Shared tag: every local container reuses one image build
     image: dev-agent:local
 

@@ -12,6 +12,7 @@ ARG INSTALL_CLAUDE="true"
 ARG INSTALL_PI="true"
 ARG INSTALL_GEMINI="true"
 ARG INSTALL_CURSOR="true"
+ARG INSTALL_AIDER="true"
 ARG INSTALL_SSH="true"
 
 # ── System packages ───────────────────────────────────────────────────────────
@@ -96,6 +97,10 @@ RUN if [ "$INSTALL_GEMINI" = "true" ]; then \
 # Installs to ~/.local/share/cursor-agent, symlinks into ~/.local/bin (on PATH)
 RUN if [ "$INSTALL_CURSOR" = "true" ]; then \
         curl -fsSL https://cursor.com/install | bash; \
+    fi
+
+RUN if [ "$INSTALL_AIDER" = "true" ]; then \
+        pip3 install aider-chat --break-system-packages; \
     fi
 
 # ── Workspace ─────────────────────────────────────────────────────────────────
