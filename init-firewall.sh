@@ -94,6 +94,11 @@ auth.openai.com
 chatgpt.com
 cursor.com
 api2.cursor.sh
+api3.cursor.sh
+api4.cursor.sh
+agentn.global.api5.cursor.sh
+repo42.cursor.sh
+marketplace.cursorapi.com
 downloads.cursor.com
 sentry.io
 statsig.anthropic.com
