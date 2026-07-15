@@ -76,75 +76,65 @@ while read -r cidr; do
     ipset add allowed-domains "$cidr"
 done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
-# Baseline allowed domains:
-#   - Claude Code: api + auth + telemetry
-#   - npm registry, nodejs.org (fnm runtime Node downloads)
-#   - PyPI (pip/pipenv/uv)
-#   - GitHub raw/release assets (not all covered by meta ranges)
-#   - Ubuntu apt mirrors (ports.ubuntu.com is the arm64 mirror)
-#   - VS Code server download (Dev Containers attach / Remote SSH)
-ALLOWED_DOMAINS="
-registry.npmjs.org
-api.anthropic.com
-console.anthropic.com
+# Allowed ZONES (a zone covers itself and every subdomain). Enforcement is
+# resolver-driven: dnsmasq adds every IP it resolves for these zones to the
+# ipset at lookup time, so rotating/geo DNS (Cursor, CDNs) can't outrun the
+# firewall. Agents: claude, codex, cursor, gemini, pi (+ aider via provider
+# zones). Plus package registries, GitHub assets, apt, VS Code server.
+ALLOWED_ZONES="
+anthropic.com
 claude.ai
-pi.dev
-api.pi.dev
-generativelanguage.googleapis.com
-cloudcode-pa.googleapis.com
-oauth2.googleapis.com
-accounts.google.com
-www.googleapis.com
-api.openai.com
-auth.openai.com
+sentry.io
+statsig.com
+openai.com
 chatgpt.com
 cursor.com
-api2.cursor.sh
-api3.cursor.sh
-api4.cursor.sh
-agentn.global.api5.cursor.sh
-repo42.cursor.sh
-marketplace.cursorapi.com
-downloads.cursor.com
-sentry.io
-statsig.anthropic.com
-statsig.com
+cursor.sh
+cursorapi.com
+googleapis.com
+accounts.google.com
+pi.dev
+npmjs.org
 nodejs.org
 pypi.org
-files.pythonhosted.org
-raw.githubusercontent.com
-objects.githubusercontent.com
-archive.ubuntu.com
-security.ubuntu.com
-ports.ubuntu.com
-marketplace.visualstudio.com
-update.code.visualstudio.com
+pythonhosted.org
+github.com
+githubusercontent.com
+ubuntu.com
+visualstudio.com
 vscode.download.prss.microsoft.com
 "
 
 # Per-container additions
 if [ -n "${EXTRA_ALLOWED_DOMAINS:-}" ]; then
-    echo "Adding extra allowed domains: $EXTRA_ALLOWED_DOMAINS"
-    ALLOWED_DOMAINS="$ALLOWED_DOMAINS
+    echo "Adding extra allowed zones: $EXTRA_ALLOWED_DOMAINS"
+    ALLOWED_ZONES="$ALLOWED_ZONES
 $(echo "$EXTRA_ALLOWED_DOMAINS" | tr ', ' '\n\n')"
 fi
 
-for domain in $ALLOWED_DOMAINS; do
-    [ -z "$domain" ] && continue
-    echo "Resolving $domain..."
-    ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
-    if [ -z "$ips" ]; then
-        echo "ERROR: Failed to resolve $domain"
-        exit 1
-    fi
-    while read -r ip; do
-        if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "ERROR: Invalid IP from DNS for $domain: $ip"
-            exit 1
-        fi
-        ipset add allowed-domains "$ip" 2>/dev/null || true
-    done < <(echo "$ips")
-done
+# dnsmasq: forward to Docker's embedded DNS, mirror answers for allowed
+# zones into the ipset. All container DNS goes through it via resolv.conf.
+{
+    echo "no-resolv"
+    echo "server=127.0.0.11"
+    echo "listen-address=127.0.0.1"
+    echo "bind-interfaces"
+    echo "cache-size=1000"
+    for z in $ALLOWED_ZONES; do
+        [ -z "$z" ] && continue
+        echo "ipset=/$z/allowed-domains"
+    done
+} > /etc/dnsmasq.conf
+
+pkill -x dnsmasq 2>/dev/null || true
+dnsmasq --conf-file=/etc/dnsmasq.conf
+sleep 1
+if ! dig +time=3 +tries=1 @127.0.0.1 api.github.com >/dev/null 2>&1; then
+    echo "ERROR: dnsmasq failed to start or resolve"
+    exit 1
+fi
+echo "nameserver 127.0.0.1" > /etc/resolv.conf
+echo "dnsmasq resolver active ($(grep -c '^ipset=' /etc/dnsmasq.conf) zones mirrored to ipset)"
 
 # Per-container CIDR escape hatch (e.g. LAN subnets for homelab services).
 # hash:net ipsets take CIDRs directly — no DNS involved.

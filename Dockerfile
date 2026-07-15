@@ -144,7 +144,7 @@ USER root
 # ── Egress firewall (init-firewall.sh, run by entrypoint) ────────────────────
 # Needs NET_ADMIN + NET_RAW at runtime. Kept late in the file for layer cache.
 RUN apt-get update && apt-get install -y \
-    iptables ipset iproute2 dnsutils aggregate \
+    iptables ipset iproute2 dnsutils aggregate dnsmasq \
     && rm -rf /var/lib/apt/lists/*
 
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
