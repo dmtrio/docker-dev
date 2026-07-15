@@ -46,8 +46,8 @@ if [ -z "$AGENT" ]; then
 fi
 
 case "$AGENT" in
-    claude|pi|gemini|cursor-agent|common) ;;
-    *) echo "Error: agent must be one of: claude, pi, gemini, cursor-agent, common"; exit 1 ;;
+    claude|pi|gemini|cursor-agent|codex|common) ;;
+    *) echo "Error: agent must be one of: claude, pi, gemini, cursor-agent, codex, common"; exit 1 ;;
 esac
 
 if [ -z "$VAR" ]; then

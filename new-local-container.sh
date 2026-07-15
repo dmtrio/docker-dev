@@ -158,7 +158,7 @@ if [ "${PROMPT_OBSIDIAN_KEY:-false}" = "true" ]; then
 fi
 
 # ── Ensure shared dirs exist ──────────────────────────────────────────────────
-mkdir -p "$SHARED_PATH/claude" "$FORGE_AUTH_PATH"
+mkdir -p "$SHARED_PATH/claude" "$SHARED_PATH/codex" "$FORGE_AUTH_PATH"
 
 # ── Launch ────────────────────────────────────────────────────────────────────
 echo ""
@@ -177,6 +177,7 @@ INSTALL_PI="$INSTALL_PI" \
 INSTALL_GEMINI="$INSTALL_GEMINI" \
 INSTALL_CURSOR="$INSTALL_CURSOR" \
 INSTALL_AIDER="$INSTALL_AIDER" \
+INSTALL_CODEX="${INSTALL_CODEX:-true}" \
 HOST_MCP_PORTS="$HOST_MCP_PORTS" \
 EXTRA_ALLOWED_DOMAINS="$EXTRA_ALLOWED_DOMAINS" \
 KEYS_PATH="$KEYS_PATH" \

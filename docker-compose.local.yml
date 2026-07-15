@@ -18,6 +18,7 @@ services:
         INSTALL_GEMINI: "${INSTALL_GEMINI:-true}"
         INSTALL_CURSOR: "${INSTALL_CURSOR:-true}"
         INSTALL_AIDER: "${INSTALL_AIDER:-true}"
+        INSTALL_CODEX: "${INSTALL_CODEX:-true}"
     # Shared tag: every local container reuses one image build
     image: dev-agent:local
 
@@ -68,6 +69,7 @@ services:
 
       # ── Shared across all containers ──────────────────────────────────────
       - ${SHARED_PATH}/claude:/home/coder/.claude
+      - ${SHARED_PATH}/codex:/home/coder/.codex
       - ${FORGE_AUTH_PATH}:${FORGE_AUTH_MOUNT}
 
     # Memory cap comes from the capability profile (coding needs headroom

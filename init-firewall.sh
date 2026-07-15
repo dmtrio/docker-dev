@@ -89,6 +89,9 @@ api.anthropic.com
 console.anthropic.com
 claude.ai
 pi.dev
+api.openai.com
+auth.openai.com
+chatgpt.com
 cursor.com
 api2.cursor.sh
 downloads.cursor.com

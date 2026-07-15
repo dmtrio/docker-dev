@@ -13,6 +13,7 @@ ARG INSTALL_PI="true"
 ARG INSTALL_GEMINI="true"
 ARG INSTALL_CURSOR="true"
 ARG INSTALL_AIDER="true"
+ARG INSTALL_CODEX="true"
 ARG INSTALL_SSH="true"
 
 # ── System packages ───────────────────────────────────────────────────────────
@@ -103,6 +104,11 @@ RUN if [ "$INSTALL_AIDER" = "true" ]; then \
         pip3 install aider-chat --break-system-packages; \
     fi
 
+# OpenAI Codex CLI (ChatGPT command line)
+RUN if [ "$INSTALL_CODEX" = "true" ]; then \
+        eval "$(fnm env)" && npm install -g @openai/codex; \
+    fi
+
 # ── Agent-identity shims ──────────────────────────────────────────────────────
 # Each agent CLI is fronted by a shim that loads per-agent MCP credentials
 # from ~/.agent-keys/(common|<agent>).env, OVERRIDING inherited env, then
@@ -110,7 +116,7 @@ RUN if [ "$INSTALL_AIDER" = "true" ]; then \
 # like Obsidian Annotated) and makes delegation safe: an agent spawning
 # another never passes its own credentials along.
 RUN mkdir -p /home/$USERNAME/.agent-shims && \
-    for a in claude pi gemini cursor-agent; do \
+    for a in claude pi gemini cursor-agent codex; do \
         printf '#!/bin/bash\nAGENT=%s\nKEYS="$HOME/.agent-keys"\nset -a\n[ -f "$KEYS/common.env" ] && . "$KEYS/common.env"\n[ -f "$KEYS/$AGENT.env" ] && . "$KEYS/$AGENT.env"\nset +a\nREAL=$(type -aP %s | grep -v ".agent-shims" | head -1)\n[ -n "$REAL" ] || { echo "%s is not installed in this container" >&2; exit 127; }\nexec "$REAL" "$@"\n' "$a" "$a" "$a" > /home/$USERNAME/.agent-shims/$a && \
         chmod +x /home/$USERNAME/.agent-shims/$a; \
     done && \
