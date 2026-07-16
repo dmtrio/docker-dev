@@ -43,6 +43,16 @@ fi
 # its start directory — the per-container config lives in /workspace/main
 # and is symlinked into each worktree per the workspace contract.)
 
+# ── Workspace skeleton (always present so editors can attach) ────────────────
+# The editor opens /workspace/dev.code-workspace, whose "main" folder makes the
+# integrated-terminal cwd /workspace/main. Guarantee that path exists at EVERY
+# boot — independent of whether up.sh's clone/init bootstrap has run yet, and
+# surviving a private-repo clone that failed — so "Attach to Running Container"
+# never dies with 'cwd "/workspace/main" does not exist'. Left empty (no .git)
+# when unbootstrapped: git clone accepts an existing empty dir, and up.sh's
+# `[ -d /workspace/main/.git ]` guard still retries the clone on a later rerun.
+su coder -c 'mkdir -p /workspace/main /workspace/worktrees'
+
 # ── Git safe directory ────────────────────────────────────────────────────────
 su -c "git config --global safe.directory /workspace" coder
 
