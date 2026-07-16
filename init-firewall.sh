@@ -94,6 +94,7 @@ cursorapi.com
 googleapis.com
 accounts.google.com
 pi.dev
+andmakenomistakes.com
 npmjs.org
 nodejs.org
 pypi.org
