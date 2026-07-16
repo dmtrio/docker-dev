@@ -1,7 +1,7 @@
 # docker-compose.local.yml
 # Template for a single local Agent dev container (RFC 03: Docker Desktop /
 # plain Linux Engine, attach mode — no sshd, no macvlan).
-# Launched via new-local-container.sh — don't run directly.
+# Launched via ./up.sh <name> — don't run directly.
 
 services:
   dev-agent:

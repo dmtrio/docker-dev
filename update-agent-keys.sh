@@ -1,7 +1,12 @@
 #!/bin/bash
-# update-agent-keys.sh — set or update an MCP credential for one agent in
-# one container. Takes effect the NEXT time that agent starts (the shims
-# read ~/.agent-keys at process launch) — no container restart needed.
+# update-agent-keys.sh — TEMPORARY override of an MCP credential for one
+# agent in one container. Takes effect the NEXT time that agent starts (the
+# shims read ~/.agent-keys at process launch) — no container restart needed.
+#
+# WARNING: ~/dev-agent/keys/<container>/ is DERIVED output — the next
+# ./up.sh <container> wipes and recomposes it from ~/dev-agent/secrets.env
+# and the manifest. Make DURABLE changes there instead; use this script only
+# for quick between-runs experiments.
 #
 # Usage:
 #   ./update-agent-keys.sh <container> <agent|common> <VAR> [value]
@@ -30,7 +35,7 @@ fi
 
 KEYS_PATH="$BASE_PATH/keys/$CONTAINER"
 if [ ! -d "$KEYS_PATH" ]; then
-    echo "Error: no keys dir at $KEYS_PATH (container never launched via new-local-container.sh?)"
+    echo "Error: no keys dir at $KEYS_PATH (container never applied via ./up.sh?)"
     exit 1
 fi
 

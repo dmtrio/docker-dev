@@ -1,13 +1,13 @@
 #!/bin/bash
 # run-research-browser.sh [brave|chrome]
-# Launches a WATCHABLE agent browser (RFC 03 research profile) and bridges
-# it for dev containers on localhost:8814.
+# Launches a WATCHABLE agent browser (for research-flavored containers)
+# and bridges it for dev containers on localhost:8814.
 #
 # - Dedicated browser instance with its OWN profile dir — none of your
 #   cookies, sessions, or extensions. Windows appear on your desktop so you
 #   can watch (and physically interrupt) everything the agent does.
 # - CDP debug port binds localhost only; the bridge requires X-API-Key.
-# - Container side: profile 'research' grants port 8814.
+# - Container side: the manifest capability `browser: true` grants port 8814.
 #
 # Default browser: Brave if installed, else Chrome. Run in tmux/launchd.
 

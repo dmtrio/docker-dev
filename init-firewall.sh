@@ -11,7 +11,10 @@
 # aggregate, curl (installed in the Dockerfile).
 #
 # Env:
-#   EXTRA_ALLOWED_DOMAINS  comma/space-separated extra domains to allow
+#   EXTRA_ALLOWED_DOMAINS  comma/space-separated extra zones to allow
+#                          (a zone covers itself and all subdomains)
+#   ALLOWED_CIDRS          comma/space-separated IP ranges to allow
+#                          (e.g. LAN subnets: 192.168.35.0/24)
 #   HOST_MCP_PORTS         comma/space-separated TCP ports on
 #                          host.docker.internal to open (MCP servers on the
 #                          host). Unset = host unreachable.

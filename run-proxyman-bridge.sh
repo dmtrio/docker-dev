@@ -8,9 +8,10 @@
 # an API key on inbound requests.
 #
 # Run in tmux or wrap in launchd. Proxyman.app must be running.
-# Containers need HOST_MCP_PORTS to include 8813 and an .mcp.json entry:
-#   "url": "http://host.docker.internal:8813/mcp",
-#   "headers": { "X-API-Key": "<contents of proxyman-bridge.key>" }
+# Key: PROXYMAN_BRIDGE_KEY in ~/dev-agent/secrets.env (self-generated on
+# first run). Containers get access via the manifest capability
+# `proxyman: true` — up.sh grants port 8813, composes the key, and
+# generates the .mcp.json entry.
 
 set -e
 

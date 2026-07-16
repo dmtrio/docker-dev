@@ -303,8 +303,8 @@ echo "  ✓ MCP servers pre-approved for claude ($(echo "$SERVERS" | jq -r "join
 # servers, so their configs carry the literal key: container-local home
 # files, mode 600, never inside the repo, regenerated from secrets.env on
 # every up (rotation flows). pi needs the pi-mcp-adapter extension for its
-# file to take effect. codex is SKIPPED: ~/.codex is a shared volume, so a
-# per-container identity written there would leak across containers.
+# file to take effect. codex is SKIPPED for now: ~/.codex is container-local
+# (per-container volume), but its remote-MCP config.toml format is unverified.
 for ref in $OBS_REFS; do
     a=$(agent_for_ref "$ref")
     eval "v=\$OBSIDIAN_KEY_$ref"
