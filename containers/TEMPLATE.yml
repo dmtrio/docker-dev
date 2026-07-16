@@ -5,7 +5,7 @@
 #   ./up.sh personal-site                                     # idempotent — rerun after edits
 #
 # Everything here is secret-free and committable. Secret VALUES live in
-# ~/dev-agent/secrets.env and are referenced by naming convention (below).
+# secrets.env (default ./.dev-agent/secrets.env) and are referenced by naming convention (below).
 # Derived state (keys/, the container, generated configs) is disposable:
 # up.sh rebuilds all of it from this file + secrets.env.
 
@@ -55,7 +55,7 @@ capabilities:
 #   identities:
 #     obsidian: [personal_site_claude, default_gemini]
 #     watch: [personal_site_claude]
-# reads from ~/dev-agent/secrets.env (see .env.example):
+# reads from secrets.env (default ./.dev-agent/secrets.env; see secrets.env.example):
 #   OBSIDIAN_KEY_personal_site_claude=ann_additive_…   → claude
 #   OBSIDIAN_KEY_default_gemini=ann_additive_…         → gemini (shared identity)
 #   OBSIDIAN_WATCH_KEY_personal_site_claude=ann_poll_… → claude

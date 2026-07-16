@@ -24,7 +24,7 @@ case "${1:-auto}" in
 esac
 [ -d "$APP" ] || { echo "ERROR: browser not found at $APP"; exit 1; }
 
-BASE_PATH="${DEV_AGENT_HOME:-$HOME/dev-agent}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/common.sh"   # sets BASE_PATH
 PROFILE_DIR="$BASE_PATH/research-browser"
 CDP_PORT=9222
 BRIDGE_PORT=8814

@@ -12,6 +12,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$SCRIPT_DIR/common.sh"   # sources ./.env, sets BASE_PATH (the dev-agent home)
 
 NAME="$1"
 if [ -z "$NAME" ]; then
@@ -30,7 +31,7 @@ MANIFEST="$SCRIPT_DIR/containers/$NAME.yml"
 [ -f "$MANIFEST" ] || { echo "Error: no manifest at $MANIFEST (cp containers/TEMPLATE.yml)"; exit 1; }
 command -v yq >/dev/null || { echo "Error: yq required (brew install yq)"; exit 1; }
 
-BASE_PATH="${DEV_AGENT_HOME:-$HOME/dev-agent}"
+mkdir -p "$BASE_PATH"   # create the dev-agent home now that we're proceeding
 SHARED_PATH="$BASE_PATH/shared"
 SECRETS_FILE="$BASE_PATH/secrets.env"
 [ -f "$SECRETS_FILE" ] || { touch "$SECRETS_FILE"; chmod 600 "$SECRETS_FILE"; }
@@ -168,13 +169,23 @@ for f in "$KEYS_PATH"/*.env; do [ -f "$f" ] && chmod 600 "$f"; done
 
 # ── Host paths + platform ─────────────────────────────────────────────────────
 ARTIFACTS_PATH="$BASE_PATH/artifacts/$NAME"
-RULES_PATH="$BASE_PATH/rules"
 mkdir -p "$ARTIFACTS_PATH"
-[ -d "$RULES_PATH" ] || { echo "Error: $RULES_PATH missing — the global rules repo is required"; exit 1; }
+# Rules: RULES_PATH override (set in ./.env) → your existing $BASE_PATH/rules
+# → the bundled repo rules. The bundled default makes a fresh clone runnable;
+# point RULES_PATH at your own rules repo to override (the agent-conf usecase).
+RULES_BUNDLED=0
+if [ -z "${RULES_PATH:-}" ]; then
+    if [ -d "$BASE_PATH/rules" ]; then RULES_PATH="$BASE_PATH/rules"
+    else RULES_PATH="$SCRIPT_DIR/rules"; RULES_BUNDLED=1; fi
+fi
+[ -d "$RULES_PATH" ] || { echo "Error: RULES_PATH '$RULES_PATH' does not exist"; exit 1; }
 # Resolve symlinks: Docker Desktop cannot use a symlink as a bind source
 RULES_PATH="$(cd "$RULES_PATH" && pwd -P)"
-# Keep rules current if the repo has a remote (merged rule PRs land here)
-git -C "$RULES_PATH" pull --ff-only -q 2>/dev/null || true
+# Keep an EXTERNAL rules repo current (merged rule PRs land here). Never pull
+# the bundled copy — it lives inside THIS repo, so a pull would pull docker-dev.
+# The flag is set where the fallback is chosen, so it's robust to symlinks that
+# would make a post-hoc path comparison misfire.
+[ "$RULES_BUNDLED" = 1 ] || git -C "$RULES_PATH" pull --ff-only -q 2>/dev/null || true
 
 if [ "$(uname -s)" = "Linux" ]; then
     USER_UID="$(id -u)"; USER_GID="$(id -g)"

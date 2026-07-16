@@ -1,2 +1,9 @@
 .DS_Store
+# repo-local config + runtime home (secrets, keys, artifacts) — never commit
 .env
+.dev-agent/
+secrets.env
+# personal container manifests carry semi-private data (private repo URLs, LAN
+# subnets, identity-ref naming) — keep only the generic TEMPLATE.yml
+containers/*.yml
+!containers/TEMPLATE.yml
