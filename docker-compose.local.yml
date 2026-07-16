@@ -12,7 +12,6 @@ services:
         USERNAME: coder
         USER_UID: ${USER_UID:-1000}
         USER_GID: ${USER_GID:-1000}
-        INSTALL_SSH: "false"
         INSTALL_CLAUDE: "${INSTALL_CLAUDE:-true}"
         INSTALL_PI: "${INSTALL_PI:-true}"
         INSTALL_GEMINI: "${INSTALL_GEMINI:-true}"

@@ -7,14 +7,12 @@ ENV TZ=America/Chicago
 ARG USERNAME=coder
 ARG USER_UID=1000
 ARG USER_GID=1000
-ARG AUTHORIZED_KEY=""
 ARG INSTALL_CLAUDE="true"
 ARG INSTALL_PI="true"
 ARG INSTALL_GEMINI="true"
 ARG INSTALL_CURSOR="true"
 ARG INSTALL_AIDER="true"
 ARG INSTALL_CODEX="true"
-ARG INSTALL_SSH="true"
 
 # ── System packages ───────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
@@ -54,7 +52,7 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd --uid $USER_UID --gid $USER_GID -m -s /bin/bash $USERNAME \
     && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# ── User .ssh dir (server + keys handled in the SSH block near EOF) ──────────
+# ── User .ssh dir (authorized_keys injected at runtime by the entrypoint) ────
 RUN mkdir -p /home/$USERNAME/.ssh \
     && chmod 700 /home/$USERNAME/.ssh \
     && chown -R $USERNAME:$USERNAME /home/$USERNAME/.ssh
@@ -150,26 +148,20 @@ RUN apt-get update && apt-get install -y \
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh
 
-# ── SSH server (optional — remote-parity builds) ─────────────────────────────
-# Kept at the end of the file so INSTALL_SSH=true/false share all layers above.
-RUN if [ "$INSTALL_SSH" = "true" ]; then \
-        apt-get update && apt-get install -y openssh-server \
-        && rm -rf /var/lib/apt/lists/* \
-        && mkdir -p /var/run/sshd \
-        && sed -i \
-            -e 's/#PasswordAuthentication yes/PasswordAuthentication no/' \
-            -e 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' \
-            -e 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' \
-            /etc/ssh/sshd_config \
-        && echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config \
-        && if [ -n "$AUTHORIZED_KEY" ]; then \
-            echo "$AUTHORIZED_KEY" > /home/$USERNAME/.ssh/authorized_keys \
-            && chmod 600 /home/$USERNAME/.ssh/authorized_keys \
-            && chown $USERNAME:$USERNAME /home/$USERNAME/.ssh/authorized_keys; \
-        fi; \
-    fi
+# ── SSH server (always installed, runs only when SSH_ENABLED=true) ──────────
+# One image everywhere: Mac attach-mode, homelab, VPS. The manifest's ssh:
+# section turns sshd on at RUNTIME (entrypoint injects SSH_AUTHORIZED_KEY).
+RUN apt-get update && apt-get install -y openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd \
+    && sed -i \
+        -e 's/#PasswordAuthentication yes/PasswordAuthentication no/' \
+        -e 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' \
+        -e 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' \
+        /etc/ssh/sshd_config \
+    && echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config
 
-ENV SSH_ENABLED=$INSTALL_SSH
+ENV SSH_ENABLED=false
 
 # VS Code / Cursor "Attach to Running Container" reads this: attach as
 # coder (not root) and open /workspace by default.

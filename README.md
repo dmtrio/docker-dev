@@ -107,17 +107,37 @@ Agents propose rule changes via PR (as the machine user); after you merge,
 - `containers/` — manifests (TEMPLATE.yml to start)
 - `Dockerfile`, `docker-compose.local.yml`, `entrypoint.sh`,
   `init-firewall.sh`, `workspace.CLAUDE.md` — the image and its contracts
-- `run-*.sh` — Mac-side capability services
-- `import-obsidian-keys.sh`, `migrate-secrets.sh`, `update-agent-keys.sh` —
-  secrets tooling (update-agent-keys is a temporary override; durable
-  changes go in secrets.env)
+- `run-*.sh` — host-side capability services
+- `import-obsidian-keys.sh`, `update-agent-keys.sh` — secrets tooling
+  (update-agent-keys is a temporary override; durable changes go in
+  secrets.env)
+- `docker-compose.ssh.yml` — overlay applied automatically when a manifest
+  has an `ssh:` section
 - `example/` — reference material from other machines, not instructions
 
-## Legacy: homelab macvlan (Unraid)
+## Remote hosts: homelab (Unraid) & VPS
 
-The original remote setup — macvlan on `br0`, per-container VLAN IPs,
-SSH + VS Code Remote-SSH — still lives in `new-container.sh`,
-`docker-compose.yml`, `bootstrap.sh`, `rm-container.sh` and uses `.env`
-(see the AUTHORIZED_KEY footnote in `.env.example`). Kept for the Unraid
-host; the manifest system above is the current architecture and will be
-ported there (clone `agent-conf`, run the same `up.sh`).
+Same system, same files, one addition. On any Linux box with Docker:
+
+1. Install `yq` (static binary), clone this repo and `agent-conf`
+   (symlink `~/dev-agent/rules` → the checkout's `rules/` dir, or set
+   `DEV_AGENT_HOME`).
+2. Create `~/dev-agent/secrets.env` (600) — including
+   `SSH_AUTHORIZED_KEY` (your public key).
+3. Add an `ssh:` section to the container's manifest:
+
+   ```yaml
+   ssh:
+     port: 2222        # published on the host
+     bind: 127.0.0.1   # keep loopback; reach it through your tunnel
+   ```
+
+4. `./up.sh <name>` — identical to the Mac. Connect with VS Code
+   **Remote-SSH** to the host/port; everything else (firewall, identities,
+   rules, artifacts) behaves exactly the same.
+
+Never expose sshd publicly: keep the bind on loopback (or a tunnel
+interface) and front it with Pangolin / Tailscale / WireGuard. Host MCP
+capabilities (`gateway`/`proxyman`/`browser`) are Mac-desktop services —
+on headless hosts leave them `false` or run the gateway service on that
+host.

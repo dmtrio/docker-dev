@@ -47,25 +47,31 @@ su -c "git config --global credential.'https://github.com'.helper '!gh auth git-
 
 # ── SSH mode vs attach mode ───────────────────────────────────────────────────
 if [ "$SSH_ENABLED" = "true" ]; then
-    # SSH host keys
+    # Runtime key injection — same image everywhere, key comes from the
+    # manifest deploy (SSH_AUTHORIZED_KEY in secrets.env). Fail loud rather
+    # than start sshd nobody can log into.
+    if [ -z "$SSH_AUTHORIZED_KEY" ]; then
+        echo "FATAL: SSH_ENABLED=true but SSH_AUTHORIZED_KEY is empty."
+        echo "Set SSH_AUTHORIZED_KEY in ~/dev-agent/secrets.env (your public key)."
+        exit 1
+    fi
+    echo "$SSH_AUTHORIZED_KEY" > /home/coder/.ssh/authorized_keys
+    chmod 600 /home/coder/.ssh/authorized_keys
+    chown coder:coder /home/coder/.ssh/authorized_keys
+
     if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
         echo "Generating SSH host keys..."
         ssh-keygen -A
         echo "✓ SSH host keys generated"
     fi
 
-    CONTAINER_IP=$(hostname -I | awk '{print $1}')
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  Container:  dev-agent-${CONTAINER_NAME}"
-    echo "  Hostname:   ${CONTAINER_NAME}"
-    echo "  IP:         ${CONTAINER_IP}"
-    echo ""
-    echo "  SSH:        ssh coder@${CONTAINER_IP}"
-    echo "  VS Code:    Remote SSH → ${CONTAINER_NAME} (if ~/.ssh/config is set)"
+    echo "  Container:  dev-agent-${CONTAINER_NAME}   (sshd on :22, published"
+    echo "              on the host at the manifest's ssh.port)"
+    echo "  SSH:        ssh -p <ssh.port> coder@<docker-host>"
+    echo "  VS Code:    Remote-SSH to the same host/port"
     echo "  Workspace:  /workspace"
-    echo ""
-    echo "  Dev servers will be reachable at http://${CONTAINER_IP}:<port>"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 

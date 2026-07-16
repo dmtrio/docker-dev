@@ -19,6 +19,15 @@ git:
 
 memory: 10g
 
+# Optional — SSH access for remote hosts (homelab/VPS): publishes sshd on
+# the host and enables it at runtime. Requires SSH_AUTHORIZED_KEY (your
+# public key) in secrets.env. Omit the whole section on the Mac (attach
+# mode needs no SSH). Keep bind at 127.0.0.1 and front with a tunnel
+# (Pangolin/Tailscale) — never expose sshd to the open internet.
+#ssh:
+#  port: 2222
+#  bind: 127.0.0.1
+
 # Agent CLIs baked into the image. Omit this key entirely = all of them.
 tools: [claude, codex, pi, gemini, cursor, aider]
 

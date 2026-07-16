@@ -65,6 +65,17 @@ CAP_PROXYMAN=$(yq '.capabilities.proxyman // false' "$MANIFEST")
 CAP_BROWSER=$(yq '.capabilities.browser // false' "$MANIFEST")
 EGRESS=$(yq -r '(.capabilities.egress // []) | join(",")' "$MANIFEST")
 EGRESS_CIDRS=$(yq -r '(.capabilities.egress_cidrs // []) | join(",")' "$MANIFEST")
+
+# Optional ssh: section — same image/manifest everywhere; SSH is just a
+# deploy capability (homelab/VPS editor access via Remote-SSH).
+SSH_PORT=$(Y '.ssh.port')
+SSH_BIND=$(Y '.ssh.bind'); SSH_BIND="${SSH_BIND:-127.0.0.1}"
+COMPOSE_FILES="-f $SCRIPT_DIR/docker-compose.local.yml"
+if [ -n "$SSH_PORT" ]; then
+    COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.ssh.yml"
+    [ -z "${SSH_AUTHORIZED_KEY:-}" ] && \
+        echo "  ⚠ ssh.port set but SSH_AUTHORIZED_KEY missing from secrets.env — container will refuse to start"
+fi
 OBS_REFS=$(yq -r '(.identities.obsidian // []) | join(" ")' "$MANIFEST")
 WATCH_REFS=$(yq -r '(.identities.watch // []) | join(" ")' "$MANIFEST")
 
@@ -182,7 +193,8 @@ INSTALL_CURSOR="$INSTALL_CURSOR" INSTALL_AIDER="$INSTALL_AIDER" \
 HOST_MCP_PORTS="$HOST_MCP_PORTS" EXTRA_ALLOWED_DOMAINS="$EGRESS" \
 ALLOWED_CIDRS="$EGRESS_CIDRS" \
 KEYS_PATH="$KEYS_PATH" ARTIFACTS_PATH="$ARTIFACTS_PATH" MEM_LIMIT="$MEM_LIMIT" \
-docker compose -p "dev-agent-$NAME" -f "$SCRIPT_DIR/docker-compose.local.yml" up -d --build
+SSH_PORT="$SSH_PORT" SSH_BIND="$SSH_BIND" SSH_AUTHORIZED_KEY="${SSH_AUTHORIZED_KEY:-}" \
+docker compose -p "dev-agent-$NAME" $COMPOSE_FILES up -d --build
 
 # ── Wait for entrypoint/firewall ──────────────────────────────────────────────
 i=0
@@ -346,4 +358,5 @@ echo ""
 echo "  VS Code / Cursor:  Dev Containers: Attach to Running Container"
 echo "  Terminal:          docker exec -it -u coder dev-agent-$NAME bash"
 echo "  Claude:            cd /workspace/main && claude"
+[ -n "$SSH_PORT" ] && echo "  SSH:               ssh -p $SSH_PORT coder@$( [ "$SSH_BIND" = "127.0.0.1" ] && echo localhost || echo '<this-host>' )"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
