@@ -43,13 +43,13 @@ survive.
 manifest, rerun, done.
 
 - **`./up.sh <name>`** — create or update `dev-agent-<name>` from
-  `containers/<name>.yml`. Composes `~/dev-agent/keys/<name>/` from `secrets.env`,
+  `containers/<name>.yml`. Composes `$DEV_AGENT_HOME/keys/<name>/` from `secrets.env`,
   builds the per-container image, waits for the firewall to come up, clones/inits
   the workspace, and generates each agent's MCP config. Re-run any time after
   editing the manifest or rotating a secret.
 
 ```bash
-./up.sh coding-personal-site      # no args → lists available manifests
+./up.sh my-app      # no args → lists available manifests
 ```
 
 ## While a container runs
@@ -62,24 +62,24 @@ Operate on a live container without a rebuild or restart.
   only dnsmasq (the ipset and iptables rules stay up). The live change is
   ephemeral; at the end it asks where to persist:
   `yml` → this manifest's `capabilities.egress` (next `./up.sh`),
-  `firewall` → `init-firewall.sh` base zones (all containers, next build),
+  `firewall` → `src/init-firewall.sh` base zones (all containers, next build),
   `none` → live only. Validates every domain first.
 
   ```bash
-  ./allow-egress.sh coding-personal-site cdn.playwright.dev api.stripe.com
-  ./allow-egress.sh coding-personal-site api.stripe.com --save yml   # skip the prompt
+  ./allow-egress.sh my-app cdn.playwright.dev api.stripe.com
+  ./allow-egress.sh my-app api.stripe.com --save yml   # skip the prompt
   ```
 
 - **`./update-agent-keys.sh <container> <agent|common> <VAR> [value]`** — TEMPORARY
   override of one MCP credential for one agent, picked up the next time that agent
   starts (the shims read `~/.agent-keys` at launch). No arguments beyond the
-  container name lists the current composed keys. Note: `~/dev-agent/keys/<name>/`
+  container name lists the current composed keys. Note: `$DEV_AGENT_HOME/keys/<name>/`
   is derived — the next `./up.sh <name>` wipes and recomposes it, so make durable
   changes in `secrets.env`/the manifest and use this only for quick experiments.
 
   ```bash
-  ./update-agent-keys.sh coding-personal-site pi OBSIDIAN_ANNOTATED_KEY   # prompts for the value
-  ./update-agent-keys.sh coding-personal-site                             # list keys
+  ./update-agent-keys.sh my-app pi OBSIDIAN_ANNOTATED_KEY   # prompts for the value
+  ./update-agent-keys.sh my-app                             # list keys
   ```
 
 ## Teardown & cleanup
@@ -91,8 +91,8 @@ Operate on a live container without a rebuild or restart.
   survive.
 
   ```bash
-  ./down.sh coding-personal-site            # stop, keep the code
-  ./down.sh coding-personal-site --purge    # full teardown
+  ./down.sh my-app            # stop, keep the code
+  ./down.sh my-app --purge    # full teardown
   ```
 
 ---
