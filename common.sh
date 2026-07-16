@@ -12,11 +12,14 @@
 # `mkdir -p "$BASE_PATH"` themselves once they've decided to proceed.
 CDD_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 if [ -f "$CDD_ROOT/.env" ]; then
-    # Disable set -e around the source: a failing line INSIDE ./.env would
-    # otherwise trip the caller's set -e and abort silently, before we could
-    # report it. Capture the status, restore set -e, then fail loud with a
-    # message (a broken ./.env is a real config error worth surfacing).
-    set +e; . "$CDD_ROOT/.env"; _env_rc=$?; set -e
+    # Disable errexit around the source: a failing line INSIDE ./.env would
+    # otherwise trip the caller's set -e and abort silently before we report
+    # it. Save and RESTORE the caller's exact errexit state (don't force it
+    # on), then fail loud on a broken ./.env — a real config error.
+    case $- in *e*) _had_e=1;; *) _had_e=0;; esac
+    set +e; . "$CDD_ROOT/.env"; _env_rc=$?
+    [ "$_had_e" = 1 ] && set -e
     [ "$_env_rc" -eq 0 ] || { echo "common.sh: ./.env exited non-zero ($_env_rc) — check $CDD_ROOT/.env" >&2; exit 1; }
+    unset _had_e _env_rc
 fi
 BASE_PATH="${DEV_AGENT_HOME:-$CDD_ROOT/.dev-agent}"
