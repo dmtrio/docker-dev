@@ -5,9 +5,15 @@ the repo root on the host (macOS or Linux) unless noted. Names in `<>` are
 placeholders; `<name>` is a manifest/container short name (the container itself
 is `dev-agent-<name>`).
 
-The one non-script prerequisite: `~/dev-agent/secrets.env` holds every secret
-value (chmod 600, never mounted). See `.env.example` for what goes in it. `up.sh`
-composes per-container credentials from it according to each manifest.
+The one non-script prerequisite: `secrets.env` holds every secret value (chmod
+600, never mounted). By default it's the gitignored `./.dev-agent/secrets.env`;
+copy `secrets.env.example` to fill it in. `up.sh` composes per-container
+credentials from it according to each manifest.
+
+All the scripts below source `common.sh` (not run directly), which resolves the
+"dev-agent home" — where secrets/keys/artifacts live. It defaults to a
+gitignored `./.dev-agent/`; override via `DEV_AGENT_HOME` / `RULES_PATH` in a
+gitignored `./.env` at the repo root (keeps your own setup working).
 
 ---
 

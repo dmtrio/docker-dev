@@ -9,7 +9,7 @@ set -e
 NAME="$1"
 [ -n "$NAME" ] || { echo "Usage: ./down.sh <name> [--purge]"; exit 1; }
 
-BASE_PATH="${DEV_AGENT_HOME:-$HOME/dev-agent}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/common.sh"   # sets BASE_PATH
 
 if [ "$2" = "--purge" ]; then
     # IMAGE_TAG passed so compose can resolve (and we can remove) the

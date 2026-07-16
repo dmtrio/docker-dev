@@ -19,7 +19,8 @@
 
 set -e
 
-SECRETS_FILE="${DEV_AGENT_HOME:-$HOME/dev-agent}/secrets.env"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/common.sh"   # sets BASE_PATH
+SECRETS_FILE="$BASE_PATH/secrets.env"
 [ -f "$SECRETS_FILE" ] || { mkdir -p "$(dirname "$SECRETS_FILE")"; touch "$SECRETS_FILE"; chmod 600 "$SECRETS_FILE"; }
 . "$SECRETS_FILE"
 if [ -z "${MCP_GATEWAY_TOKEN:-}" ]; then

@@ -22,7 +22,7 @@
 
 set -e
 
-BASE_PATH="${DEV_AGENT_HOME:-$HOME/dev-agent}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/common.sh"   # sets BASE_PATH
 CONTAINER="$1"
 AGENT="$2"
 VAR="$3"
