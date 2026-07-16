@@ -7,15 +7,15 @@ ENV TZ=America/Chicago
 ARG USERNAME=coder
 ARG USER_UID=1000
 ARG USER_GID=1000
-ARG AUTHORIZED_KEY=""
 ARG INSTALL_CLAUDE="true"
-ARG INSTALL_AIDER="true"
+ARG INSTALL_PI="true"
 ARG INSTALL_GEMINI="true"
+ARG INSTALL_CURSOR="true"
+ARG INSTALL_AIDER="true"
+ARG INSTALL_CODEX="true"
 
 # ── System packages ───────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
-    # SSH
-    openssh-server \
     # Core utilities
     curl wget git git-lfs sudo \
     # Build tools
@@ -43,7 +43,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Gitea CLI (tea) ──────────────────────────────────────────────────────────
-RUN curl -fsSL "https://dl.gitea.com/tea/0.9.2/tea-0.9.2-linux-amd64" -o /usr/local/bin/tea \
+RUN curl -fsSL "https://dl.gitea.com/tea/0.9.2/tea-0.9.2-linux-$(dpkg --print-architecture)" -o /usr/local/bin/tea \
     && chmod +x /usr/local/bin/tea
 
 # ── Create non-root user ──────────────────────────────────────────────────────
@@ -52,22 +52,9 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd --uid $USER_UID --gid $USER_GID -m -s /bin/bash $USERNAME \
     && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# ── SSH server setup ──────────────────────────────────────────────────────────
-RUN mkdir /var/run/sshd \
-    && sed -i \
-        -e 's/#PasswordAuthentication yes/PasswordAuthentication no/' \
-        -e 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' \
-        -e 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' \
-        /etc/ssh/sshd_config \
-    && echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config
-
-# ── Inject authorized key (build arg) ────────────────────────────────────────
+# ── User .ssh dir (authorized_keys injected at runtime by the entrypoint) ────
 RUN mkdir -p /home/$USERNAME/.ssh \
     && chmod 700 /home/$USERNAME/.ssh \
-    && if [ -n "$AUTHORIZED_KEY" ]; then \
-        echo "$AUTHORIZED_KEY" > /home/$USERNAME/.ssh/authorized_keys; \
-       fi \
-    && chmod 600 /home/$USERNAME/.ssh/authorized_keys \
     && chown -R $USERNAME:$USERNAME /home/$USERNAME/.ssh
 
 # ── fnm (Fast Node Manager) ───────────────────────────────────────────────────
@@ -85,21 +72,72 @@ RUN echo '' >> /home/$USERNAME/.bashrc \
     && echo 'source ~/.bashrc' >> /home/$USERNAME/.bash_profile
 
 # Install a default LTS node (projects can override via .node-version)
-ENV PATH="/home/coder/.fnm:$PATH"
+ENV PATH="/home/coder/.local/bin:/home/coder/.fnm:$PATH"
 RUN eval "$(fnm env)" && fnm install --lts && fnm use lts-latest
+
+# ── uv (Python package manager) ──────────────────────────────────────────────
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # ── AI tools (toggled via build args) ────────────────────────────────────────
 RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
         eval "$(fnm env)" && npm install -g @anthropic-ai/claude-code; \
     fi
 
-RUN if [ "$INSTALL_AIDER" = "true" ]; then \
-        pip3 install aider-chat --break-system-packages; \
+# pi ships an interactive installer (pi.dev/install.sh) that just wraps this
+# npm package — install it directly for non-TTY builds
+RUN if [ "$INSTALL_PI" = "true" ]; then \
+        eval "$(fnm env)" && npm install -g @earendil-works/pi-coding-agent; \
     fi
 
 RUN if [ "$INSTALL_GEMINI" = "true" ]; then \
         eval "$(fnm env)" && npm install -g @google/gemini-cli; \
     fi
+
+# Installs to ~/.local/share/cursor-agent, symlinks into ~/.local/bin (on PATH)
+RUN if [ "$INSTALL_CURSOR" = "true" ]; then \
+        curl -fsSL https://cursor.com/install | bash; \
+    fi
+
+RUN if [ "$INSTALL_AIDER" = "true" ]; then \
+        pip3 install aider-chat --break-system-packages; \
+    fi
+
+# OpenAI Codex CLI (ChatGPT command line)
+RUN if [ "$INSTALL_CODEX" = "true" ]; then \
+        eval "$(fnm env)" && npm install -g @openai/codex; \
+    fi
+
+# ── Agent-identity shims ──────────────────────────────────────────────────────
+# Each agent CLI is fronted by a shim that loads per-agent MCP credentials
+# from ~/.agent-keys/(common|<agent>).env, OVERRIDING inherited env, then
+# execs the real binary. This gives per-agent identity (attribution in tools
+# like Obsidian Annotated) and makes delegation safe: an agent spawning
+# another never passes its own credentials along.
+RUN mkdir -p /home/$USERNAME/.agent-shims && \
+    for a in claude pi gemini cursor-agent codex; do \
+        printf '#!/bin/bash\nAGENT=%s\nKEYS="$HOME/.agent-keys"\nset -a\n[ -f "$KEYS/common.env" ] && . "$KEYS/common.env"\n[ -f "$KEYS/$AGENT.env" ] && . "$KEYS/$AGENT.env"\nset +a\nREAL=$(type -aP %s | grep -v ".agent-shims" | head -1)\n[ -n "$REAL" ] || { echo "%s is not installed in this container" >&2; exit 127; }\nexec "$REAL" "$@"\n' "$a" "$a" "$a" > /home/$USERNAME/.agent-shims/$a && \
+        chmod +x /home/$USERNAME/.agent-shims/$a; \
+    done
+
+# Shims must win over the real binaries in EVERY shell — interactive,
+# non-interactive (`docker exec ... claude`, `ssh host 'claude -p'`, VS Code
+# tasks), and login. ENV covers all of them; .bashrc alone would not (its
+# export sits after Ubuntu's non-interactive guard). The fnm default-alias
+# bin is a STABLE path to node + the npm-global CLIs (the per-shell
+# fnm_multishells path only exists after `fnm env`), so the shims' `type -aP`
+# resolves the real binaries without an interactive shell.
+ENV PATH="/home/$USERNAME/.agent-shims:/home/$USERNAME/.local/bin:/home/$USERNAME/.fnm/aliases/default/bin:/home/$USERNAME/.fnm:$PATH"
+
+# ENV covers `docker exec` (attach mode) but sshd builds its session env via
+# PAM and ignores it — so SSH sessions (incl. non-interactive `ssh host
+# 'claude -p'`) need the PATH in /etc/environment, which pam_env applies to
+# every SSH session type. $PATH here is the resolved ENV value set above.
+RUN echo "PATH=$PATH" | sudo tee /etc/environment >/dev/null
+
+# Auth/state dirs pre-created as coder so their per-container named volumes
+# initialize with the right ownership on first mount
+RUN mkdir -p /home/$USERNAME/.claude /home/$USERNAME/.codex \
+    /home/$USERNAME/.gemini /home/$USERNAME/.cursor /home/$USERNAME/.config/gh
 
 # ── Workspace ─────────────────────────────────────────────────────────────────
 RUN sudo mkdir -p /workspace && sudo chown $USERNAME:$USERNAME /workspace
@@ -110,9 +148,37 @@ WORKDIR /workspace
 COPY --chown=$USERNAME:$USERNAME entrypoint.sh /home/$USERNAME/entrypoint.sh
 RUN chmod +x /home/$USERNAME/entrypoint.sh
 
-EXPOSE 22
-
-# Back to root to run sshd (entrypoint drops back to coder context)
+# Back to root for the entrypoint (drops to coder context / runs sshd)
 USER root
+
+# ── Egress firewall (init-firewall.sh, run by entrypoint) ────────────────────
+# Needs NET_ADMIN + NET_RAW at runtime. Kept late in the file for layer cache.
+RUN apt-get update && apt-get install -y \
+    iptables ipset iproute2 dnsutils aggregate dnsmasq \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY init-firewall.sh /usr/local/bin/init-firewall.sh
+RUN chmod +x /usr/local/bin/init-firewall.sh
+
+# ── SSH server (always installed, runs only when SSH_ENABLED=true) ──────────
+# One image everywhere: Mac attach-mode, homelab, VPS. The manifest's ssh:
+# section turns sshd on at RUNTIME (entrypoint injects SSH_AUTHORIZED_KEY).
+RUN apt-get update && apt-get install -y openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd \
+    && sed -i \
+        -e 's/#PasswordAuthentication yes/PasswordAuthentication no/' \
+        -e 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' \
+        -e 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' \
+        /etc/ssh/sshd_config \
+    && echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config
+
+ENV SSH_ENABLED=false
+
+# VS Code / Cursor "Attach to Running Container" reads this: attach as
+# coder (not root) and open /workspace by default.
+LABEL devcontainer.metadata='{"remoteUser":"coder","workspaceFolder":"/workspace"}'
+
+EXPOSE 22
 
 ENTRYPOINT ["/home/coder/entrypoint.sh"]

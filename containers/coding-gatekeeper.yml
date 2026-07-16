@@ -1,0 +1,68 @@
+# containers/<name>.yml — one manifest = one container. The assembly is a config.
+#
+#   cp containers/TEMPLATE.yml containers/personal-site.yml   # filename = container name
+#   vim containers/personal-site.yml
+#   ./up.sh personal-site                                     # idempotent — rerun after edits
+#
+# Everything here is secret-free and committable. Secret VALUES live in
+# ~/dev-agent/secrets.env and are referenced by naming convention (below).
+# Derived state (keys/, the container, generated configs) is disposable:
+# up.sh rebuilds all of it from this file + secrets.env.
+
+task: coding-gatekeeper
+repo: https://github.com/dmtrio/gatekeeper.git
+forge: github
+
+git:
+  name:
+  email:
+
+memory: 10g
+
+# Agent CLIs baked into the image. Omit this key entirely = all of them.
+tools: [claude, codex, pi, gemini, cursor, aider]
+
+# Capability grants. Each maps to a Mac-side service port, its secret in
+# secrets.env, the firewall rule, and a generated MCP entry for Claude Code.
+#   gateway  → 8811, MCP_GATEWAY_TOKEN     (run-gateway-coding.sh — headless Playwright)
+#   proxyman → 8813, PROXYMAN_BRIDGE_KEY   (run-proxyman-bridge.sh — traffic capture)
+#   browser  → 8814, RESEARCH_BROWSER_KEY  (run-research-browser.sh — watchable desktop browser)
+capabilities:
+  gateway: true
+  proxyman: false
+  browser: false
+  egress: [] # extra allowed outbound domains, e.g. [api.stripe.com]
+  egress_cidrs: [192.168.35.0/24, 192.168.20.0/24] # LAN escape hatch
+
+# Per-agent identities — EXPLICIT references to secrets.env names.
+# An entry R reads OBSIDIAN_KEY_R (obsidian) or OBSIDIAN_WATCH_KEY_R (watch);
+# the agent it belongs to is R's suffix: _claude, _codex, _pi, _gemini,
+# _cursor_agent. up.sh validates every reference at apply time and HARD-FAILS
+# if a key is missing from secrets.env or a suffix isn't a known agent.
+# Any obsidian entry also allowlists the Annotated endpoint.
+#
+# Example:
+#   identities:
+#     obsidian: [personal_site_claude, default_gemini]
+#     watch: [personal_site_claude]
+# reads from ~/dev-agent/secrets.env (see .env.example):
+#   OBSIDIAN_KEY_personal_site_claude=ann_additive_…   → claude
+#   OBSIDIAN_KEY_default_gemini=ann_additive_…         → gemini (shared identity)
+#   OBSIDIAN_WATCH_KEY_personal_site_claude=ann_poll_… → claude
+identities:
+  obsidian:
+    [
+      default_claude,
+      default_cursor_agent,
+      default_gemini,
+      default_pi,
+      default_codex,
+    ]
+  watch:
+    [
+      default_claude,
+      default_cursor_agent,
+      default_gemini,
+      default_pi,
+      default_codex,
+    ]

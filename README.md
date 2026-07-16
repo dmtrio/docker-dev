@@ -1,156 +1,143 @@
-# Agent Dev Container
+# Agent Dev Containers
 
-Isolated Docker environments for AI-assisted development on Unraid. One container per project, each appearing as a real host on your VLAN (`192.168.35.81–90`). SSH in from your MacBook, use VS Code Remote SSH, and access dev servers directly by IP.
+Isolated, firewalled Docker environments where AI coding agents work with
+full permissions — locally on your Mac (or any Docker host). One container
+per project, declared by a manifest. The assembly is a config.
 
-## How it works
+```
+containers/<name>.yml  ──./up.sh <name>──►  dev-agent-<name>
+        │                                      ├── agents: claude, codex, pi,
+~/dev-agent/secrets.env                        │   gemini, cursor-agent, aider
+  (all secret values,                          ├── egress firewall (zone allowlist)
+   never mounted)                              ├── /workspace (volume): main/ + worktrees/
+                                               ├── /agent-rules (ro): global rules + skills
+~/git/agent-conf                               ├── /artifacts → Mac-visible outbox
+  (rules repo, mounted ro)                     └── per-agent identity via shims
+```
 
-Each container gets:
+## The two files you author
 
-- A name you choose (e.g. `my-api`) used as Docker container name and SSH hostname
-- A static VLAN IP from the `192.168.35.81–90` pool via macvlan on `br0`
-- An isolated `/workspace` mounted from `/mnt/user/docker-dev/workspaces/<name>`
-- AI tools (toggleable): Claude Code, Aider, Gemini CLI
-- Dev tools: GitHub CLI, Gitea CLI (tea), fnm, pipenv, Playwright
+1. **`containers/<name>.yml`** — one manifest = one container: repo, memory,
+   tools, capability grants, per-agent identities. Secret-free, committable.
+   Copy `containers/TEMPLATE.yml` and edit.
+2. **`~/dev-agent/secrets.env`** — every secret value, one file, mode 600,
+   never mounted. See `.env.example` for the naming conventions.
 
-Shared auth (Claude, GitHub/Gitea) and MCP config live under `/mnt/user/docker-dev/shared/` and are mounted into whichever containers need them.
-
----
+Everything else is derived: `./up.sh <name>` (idempotent) composes
+credentials, applies the firewall, clones the repo, lays out worktrees, and
+generates MCP configs. `./down.sh <name>` stops (code survives);
+`--purge` forgets the container entirely (artifacts still survive).
 
 ## Prerequisites
 
-- Docker + Docker Compose on Unraid
-- `br0` macvlan network already created in Docker
-- IPs `192.168.35.81–90` reserved and outside your DHCP pool
-- Your SSH public key (`~/.ssh/id_ed25519.pub`)
+- Docker Desktop (macOS) or Docker Engine (Linux)
+- `yq` (`brew install yq`)
+- The rules repo checked out at `~/git/agent-conf`, with
+  `~/dev-agent/rules` symlinked to its `rules/` dir (Linux hosts: clone it)
+- `~/dev-agent/secrets.env` (chmod 600) — see `.env.example`
 
----
-
-## First-time Setup
-
-```bash
-cp .env.example .env
-# Fill in: AUTHORIZED_KEY
-chmod +x new-container.sh rm-container.sh
-```
-
----
-
-## Spinning Up a Container
+## Quick start
 
 ```bash
-./new-container.sh
+cp containers/TEMPLATE.yml containers/my-app.yml
+vim containers/my-app.yml          # repo URL, memory, capabilities, identities
+./up.sh my-app
 ```
 
-Prompts for:
+Then attach: VS Code / Cursor → **"Dev Containers: Attach to Running
+Container"** → `dev-agent-my-app` (lands as `coder` in `/workspace` — open
+`dev.code-workspace` for the multi-root worktree view). Terminal:
+`docker exec -it -u coder dev-agent-my-app bash`. Run `claude` from
+`/workspace/main`.
 
-1. **Container name** — e.g. `my-api`
-2. **Project path** — defaults to `/mnt/user/docker-dev/workspaces/<name>`
-3. **IP** — auto-suggests the next free IP on `br0`
-4. **Git forge** — GitHub or Gitea (determines which shared auth dir is mounted)
-5. **Git identity** — name and email for commits (per container)
-6. **AI tools** — Claude Code, Aider, Gemini CLI (each toggleable, default yes)
-7. **Docker icon** — URL or local path for Unraid dashboard (optional)
+**First session per container** (persists across rebuilds in per-container
+auth volumes): `claude` login; `codex` / `gemini` if used. Agents already
+carry the GitHub machine-user token from `secrets.env`.
 
-Prints an SSH config block to paste into `~/.ssh/config` on your Mac.
+## Capabilities (manifest → Mac-side service)
 
----
+| Manifest key | Port | Service (run in tmux/launchd) | Secret in secrets.env |
+|---|---|---|---|
+| `gateway: true` | 8811 | `run-gateway-coding.sh` — headless Playwright via Docker MCP gateway | `MCP_GATEWAY_TOKEN` |
+| `proxyman: true` | 8813 | `run-proxyman-bridge.sh` — Proxyman traffic capture | `PROXYMAN_BRIDGE_KEY` |
+| `browser: true` | 8814 | `run-research-browser.sh` — watchable desktop Brave/Chrome, isolated profile | `RESEARCH_BROWSER_KEY` |
+| `egress: [...]` | — | extra allowed zones (a zone covers its subdomains) | — |
+| `egress_cidrs: [...]` | — | IP-range escape hatch (LAN subnets) | — |
 
-## Connecting from MacBook
+Service tokens self-generate into `secrets.env` on each script's first run.
+A container without a grant cannot reach the host or the zone — enforced by
+the in-container firewall (dnsmasq resolver-driven ipset; rotating CDN DNS
+can't outrun it).
 
-Add the printed block to `~/.ssh/config`:
+## Identity model
 
-```
-Host my-api
-    HostName 192.168.35.81
-    User coder
-    StrictHostKeyChecking no
-```
+- **Per agent, not per container**: shims front each CLI and load
+  `~/.agent-keys/common.env` + `<agent>.env` at process start. Delegation
+  (`cursor-agent -p` from claude) never leaks the invoker's credentials.
+- **Obsidian Annotated**: one scoped key per agent
+  (`OBSIDIAN_KEY_<ref>` in secrets.env), referenced explicitly from the
+  manifest's `identities:` lists — validated at `up` time, hard-fail on
+  dangling refs.
+- **GitHub**: agents act as the machine user (`GH_TOKEN`); your personal
+  login never enters a container unless you `gh auth login` there yourself.
+  PRs/comments from agents show as the bot; you review and merge as you.
 
-Then:
+## Rules & skills (shared knowledge, never shared identity)
 
-```bash
-ssh my-api
+`~/git/agent-conf` mounts read-only at `/agent-rules` in every container:
+`AGENTS.md` fans out as every agent's global rules file, `skills/` as
+Claude's skills. Rule layers: global → `/workspace/rules.local.md`
+(container-local, uncommitted) → the project repo's own CLAUDE.md.
+Agents propose rule changes via PR (as the machine user); after you merge,
+`git pull` in `~/git/agent-conf` updates every container live.
 
-# VS Code: Remote-SSH → Connect to Host → my-api
-# Open folder: /workspace
-```
+## Persistence map
 
----
+| State | Lives in | Survives recreate | Survives `--purge` |
+|---|---|---|---|
+| Code | workspace volume (+ git) | ✓ | ✗ (git: forever) |
+| Agent logins, MCP approvals | per-container auth volumes | ✓ | ✗ |
+| Identity keys | `secrets.env` (composed at up) | ✓ | ✓ |
+| Rules & skills | `~/git/agent-conf` | ✓ | ✓ |
+| Non-code outputs | `~/dev-agent/artifacts/<name>/` (`/artifacts`) | ✓ | ✓ |
 
-## First Time in a Container
+## Repo map
 
-```bash
-ssh my-api
+- `up.sh` / `down.sh` — container lifecycle from manifests
+- `containers/` — manifests (TEMPLATE.yml to start)
+- `Dockerfile`, `docker-compose.local.yml`, `entrypoint.sh`,
+  `init-firewall.sh`, `workspace.CLAUDE.md` — the image and its contracts
+- `run-*.sh` — host-side capability services
+- `import-obsidian-keys.sh`, `update-agent-keys.sh` — secrets tooling
+  (update-agent-keys is a temporary override; durable changes go in
+  secrets.env)
+- `docker-compose.ssh.yml` — overlay applied automatically when a manifest
+  has an `ssh:` section
+- `example/` — reference material from other machines, not instructions
 
-# Auth Claude (once — stored in shared dir)
-claude
+## Remote hosts: homelab (Unraid) & VPS
 
-# Auth GitHub (once — stored in shared dir)
-gh auth login
+Same system, same files, one addition. On any Linux box with Docker:
 
-# Or auth Gitea
-tea login add
-```
+1. Install `yq` (static binary), clone this repo and `agent-conf`
+   (symlink `~/dev-agent/rules` → the checkout's `rules/` dir, or set
+   `DEV_AGENT_HOME`).
+2. Create `~/dev-agent/secrets.env` (600) — including
+   `SSH_AUTHORIZED_KEY` (your public key).
+3. Add an `ssh:` section to the container's manifest:
 
----
+   ```yaml
+   ssh:
+     port: 2222        # published on the host
+     bind: 127.0.0.1   # keep loopback; reach it through your tunnel
+   ```
 
-## MCP Config
+4. `./up.sh <name>` — identical to the Mac. Connect with VS Code
+   **Remote-SSH** to the host/port; everything else (firewall, identities,
+   rules, artifacts) behaves exactly the same.
 
-Shared MCP server config lives at `/mnt/user/docker-dev/shared/mcp.json`. It's mounted read-only into every container and symlinked to `/workspace/.mcp.json` at startup.
-
-Edit it from the Unraid terminal to add MCP servers (e.g. Browserless):
-
-```json
-{
-  "mcpServers": {
-    "browser": {
-      "command": "npx",
-      "args": ["playwright-browserless-mcp"],
-      "env": {
-        "BROWSERLESS_URL": "ws://192.168.35.90:3000?token=yourtoken"
-      }
-    }
-  }
-}
-```
-
-Restart Claude (`/exit` then `claude`) to pick up changes.
-
----
-
-## Accessing Dev Servers
-
-```
-http://192.168.35.81:3000   <- Next.js dev server
-http://192.168.35.81:8080   <- Express API
-```
-
-No port forwarding needed — macvlan makes each container a real VLAN host.
-
----
-
-## Managing Containers
-
-```bash
-./rm-container.sh              # list all containers
-./rm-container.sh my-api       # remove container (shared auth preserved on disk)
-docker restart dev-agent-my-api   # restart a container
-docker logs -f dev-agent-my-api   # view logs
-```
-
----
-
-## Directory Layout
-
-```
-/mnt/user/docker-dev/
-├── new-container.sh, rm-container.sh, ...   <- scripts
-├── shared/
-│   ├── claude/           <- shared, ~/.claude
-│   ├── gh/               <- shared, ~/.config/gh (GitHub)
-│   ├── gitea/            <- shared, ~/.config/tea (Gitea)
-│   └── mcp.json          <- shared MCP config (read-only)
-└── workspaces/
-    ├── my-api/           <- workspace for container "my-api"
-    └── personal-site/    <- workspace for container "personal-site"
-```
+Never expose sshd publicly: keep the bind on loopback (or a tunnel
+interface) and front it with Pangolin / Tailscale / WireGuard. Host MCP
+capabilities (`gateway`/`proxyman`/`browser`) are Mac-desktop services —
+on headless hosts leave them `false` or run the gateway service on that
+host.

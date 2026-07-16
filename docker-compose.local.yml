@@ -1,0 +1,96 @@
+# docker-compose.local.yml
+# Template for a single local Agent dev container (RFC 03: Docker Desktop /
+# plain Linux Engine, attach mode — no sshd, no macvlan).
+# Launched via ./up.sh <name> — don't run directly.
+
+services:
+  dev-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        USERNAME: coder
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
+        INSTALL_CLAUDE: "${INSTALL_CLAUDE:-true}"
+        INSTALL_PI: "${INSTALL_PI:-true}"
+        INSTALL_GEMINI: "${INSTALL_GEMINI:-true}"
+        INSTALL_CURSOR: "${INSTALL_CURSOR:-true}"
+        INSTALL_AIDER: "${INSTALL_AIDER:-true}"
+        INSTALL_CODEX: "${INSTALL_CODEX:-true}"
+    # Per-container tag: each container builds/uses its own image tag
+    image: dev-agent:${IMAGE_TAG:-local}
+
+    container_name: dev-agent-${CONTAINER_NAME}
+    hostname: ${CONTAINER_NAME}
+
+    restart: unless-stopped
+
+    # Egress firewall (init-firewall.sh) needs these; entrypoint fails loud
+    # if they're missing while ENABLE_FIREWALL=true (the default).
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Docker Desktop provides host.docker.internal natively; this line makes
+    # it work on plain Linux Engine too.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    environment:
+      - CONTAINER_NAME=${CONTAINER_NAME}
+      - GIT_USER_NAME=${GIT_USER_NAME:-}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
+      - TZ=${TZ:-America/Chicago}
+      # Host MCP opt-in: comma-separated TCP ports on host.docker.internal.
+      # Empty = container cannot reach the host at all.
+      - HOST_MCP_PORTS=${HOST_MCP_PORTS:-}
+      # Extra egress allowlist domains (comma-separated), per project.
+      - EXTRA_ALLOWED_DOMAINS=${EXTRA_ALLOWED_DOMAINS:-}
+      # CIDR escape hatch (comma-separated), e.g. LAN subnets.
+      - ALLOWED_CIDRS=${ALLOWED_CIDRS:-}
+      # MCP credentials are NOT container env — they load per agent at
+      # process start from the mounted ~/.agent-keys dir (see volumes).
+
+    volumes:
+      # ── Project workspace: named volume, repo cloned inside ───────────────
+      # (compose project name prefixes this, so each container gets its own)
+      - workspace:/workspace
+
+      # ── Artifacts outbox: survives container/volume destruction ───────────
+      # Mac-browsable. For agent OUTPUTS that aren't code: screenshots,
+      # reports, exports, progress notes. Code still exits via git only.
+      - ${ARTIFACTS_PATH}:/artifacts
+
+      # ── Per-agent MCP credentials (edit host-side, live in container) ─────
+      # <keys>/common.env = capability tokens (gateway, bridges);
+      # <keys>/<agent>.env = that agent's identity keys. Loaded by the
+      # agent-identity shims at process start — changes apply on next launch.
+      - ${KEYS_PATH}:/home/coder/.agent-keys:ro
+
+      # ── Shared knowledge, never shared identity ───────────────────────────
+      # Global rules + skills, read-only: host is the single writer; agents
+      # propose changes via PR to the rules repo (see AGENTS.md governance).
+      - ${RULES_PATH}:/agent-rules:ro
+
+      # ── Per-container auth/state: scoped to THIS container, but survives
+      # its rebuilds/recreates (log in once per container, not per rebuild).
+      # Removed only by down.sh --purge.
+      - claude-auth:/home/coder/.claude
+      - codex-auth:/home/coder/.codex
+      - gemini-state:/home/coder/.gemini
+      - cursor-state:/home/coder/.cursor
+      - gh-auth:/home/coder/.config/gh
+
+    # Memory cap comes from the capability profile (coding needs headroom
+    # for builds/tests; default stays lean)
+    mem_limit: ${MEM_LIMIT:-2g}
+    memswap_limit: ${MEM_LIMIT:-2g}
+
+volumes:
+  workspace:
+  claude-auth:
+  codex-auth:
+  gemini-state:
+  cursor-state:
+  gh-auth:
