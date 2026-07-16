@@ -4,6 +4,6 @@
 .dev-agent/
 secrets.env
 # personal container manifests carry semi-private data (private repo URLs, LAN
-# subnets, identity-ref naming) — keep only the generic template + example
+# subnets, identity-ref naming) — keep only the generic TEMPLATE.yml
 containers/*.yml
 !containers/TEMPLATE.yml

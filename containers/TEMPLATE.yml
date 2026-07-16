@@ -55,7 +55,7 @@ capabilities:
 #   identities:
 #     obsidian: [personal_site_claude, default_gemini]
 #     watch: [personal_site_claude]
-# reads from secrets.env (default ./.dev-agent/secrets.env) (see secrets.env.example):
+# reads from secrets.env (default ./.dev-agent/secrets.env; see secrets.env.example):
 #   OBSIDIAN_KEY_personal_site_claude=ann_additive_…   → claude
 #   OBSIDIAN_KEY_default_gemini=ann_additive_…         → gemini (shared identity)
 #   OBSIDIAN_WATCH_KEY_personal_site_claude=ann_poll_… → claude
