@@ -67,6 +67,14 @@ RUN echo '' >> /home/$USERNAME/.bashrc \
     && echo '# fnm' >> /home/$USERNAME/.bashrc \
     && echo 'export PATH="/home/$USERNAME/.fnm:$PATH"' >> /home/$USERNAME/.bashrc \
     && echo 'eval "$(fnm env --use-on-cd --shell bash)"' >> /home/$USERNAME/.bashrc \
+    # `fnm env` prepends fnm_multishells/<pid>/bin (the active node's global
+    # bin, holding the REAL agent CLIs) to the FRONT of PATH in interactive
+    # shells — ahead of the image's ENV PATH. Re-assert the shims here, AFTER
+    # the fnm eval, so `claude`/`gemini`/etc. launched from a terminal still
+    # resolve to the identity shim (which loads per-agent MCP keys) and not
+    # the bare binary. Without this, agents come up with no MCP credentials.
+    && echo '# agent-shims must outrank fnm-injected node bin (see Dockerfile)' >> /home/$USERNAME/.bashrc \
+    && echo 'export PATH="$HOME/.agent-shims:$PATH"' >> /home/$USERNAME/.bashrc \
     # Also add to .bash_profile for SSH login shells
     && echo '' >> /home/$USERNAME/.bash_profile \
     && echo 'source ~/.bashrc' >> /home/$USERNAME/.bash_profile
