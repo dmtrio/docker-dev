@@ -105,15 +105,15 @@ Agents propose rule changes via PR (as the machine user); after you merge,
 
 - `up.sh` / `down.sh` — container lifecycle from manifests
 - `containers/` — manifests (TEMPLATE.yml to start)
-- `Dockerfile`, `docker-compose.local.yml`, `entrypoint.sh`,
-  `init-firewall.sh`, `workspace.CLAUDE.md` — the image and its contracts
+- `Dockerfile`, `docker-compose.local.yml`, `workspace.CLAUDE.md`,
+  `src/` (`entrypoint.sh`, `init-firewall.sh`) — the image and its contracts
 - `run-*.sh` — host-side capability services
-- `import-obsidian-keys.sh`, `update-agent-keys.sh` — secrets tooling
-  (update-agent-keys is a temporary override; durable changes go in
-  secrets.env)
+- `allow-egress.sh` — add egress domains to a running container (no restart)
+- `update-agent-keys.sh` — temporary per-agent key override; durable changes
+  go in secrets.env
 - `docker-compose.ssh.yml` — overlay applied automatically when a manifest
   has an `ssh:` section
-- `example/` — reference material from other machines, not instructions
+- `script.md` — every script, grouped by lifecycle
 
 ## Remote hosts: homelab (Unraid) & VPS
 

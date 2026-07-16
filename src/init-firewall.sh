@@ -85,7 +85,9 @@ done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 # resolver-driven: dnsmasq adds every IP it resolves for these zones to the
 # ipset at lookup time, so rotating/geo DNS (Cursor, CDNs) can't outrun the
 # firewall. Agents: claude, codex, cursor, gemini, pi (+ aider via provider
-# zones). Plus package registries, GitHub assets, apt, VS Code server.
+# zones). Plus package registries, GitHub assets, apt, VS Code server, and
+# Playwright browser downloads (playwright is in the base image; the standing
+# "visual check on every step" rule needs a working browser in every container).
 ALLOWED_ZONES="
 anthropic.com
 claude.ai
@@ -110,6 +112,8 @@ ubuntu.com
 visualstudio.com
 vscode.download.prss.microsoft.com
 vsassets.io
+cdn.playwright.dev
+playwright.download.prss.microsoft.com
 "
 
 # Per-container additions
