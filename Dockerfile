@@ -117,10 +117,16 @@ RUN mkdir -p /home/$USERNAME/.agent-shims && \
     for a in claude pi gemini cursor-agent codex; do \
         printf '#!/bin/bash\nAGENT=%s\nKEYS="$HOME/.agent-keys"\nset -a\n[ -f "$KEYS/common.env" ] && . "$KEYS/common.env"\n[ -f "$KEYS/$AGENT.env" ] && . "$KEYS/$AGENT.env"\nset +a\nREAL=$(type -aP %s | grep -v ".agent-shims" | head -1)\n[ -n "$REAL" ] || { echo "%s is not installed in this container" >&2; exit 127; }\nexec "$REAL" "$@"\n' "$a" "$a" "$a" > /home/$USERNAME/.agent-shims/$a && \
         chmod +x /home/$USERNAME/.agent-shims/$a; \
-    done && \
-    echo '' >> /home/$USERNAME/.bashrc && \
-    echo '# agent-identity shims must win over the real binaries' >> /home/$USERNAME/.bashrc && \
-    echo 'export PATH="$HOME/.agent-shims:$PATH"' >> /home/$USERNAME/.bashrc
+    done
+
+# Shims must win over the real binaries in EVERY shell — interactive,
+# non-interactive (`docker exec ... claude`, `ssh host 'claude -p'`, VS Code
+# tasks), and login. ENV covers all of them; .bashrc alone would not (its
+# export sits after Ubuntu's non-interactive guard). The fnm default-alias
+# bin is a STABLE path to node + the npm-global CLIs (the per-shell
+# fnm_multishells path only exists after `fnm env`), so the shims' `type -aP`
+# resolves the real binaries without an interactive shell.
+ENV PATH="/home/$USERNAME/.agent-shims:/home/$USERNAME/.local/bin:/home/$USERNAME/.fnm/aliases/default/bin:/home/$USERNAME/.fnm:$PATH"
 
 # Auth/state dirs pre-created as coder so their per-container named volumes
 # initialize with the right ownership on first mount

@@ -93,24 +93,29 @@ agent_for_ref() {
     esac
 }
 
-# Validate ALL identity refs before touching anything (hard fail on error)
+# Validate ALL identity refs before touching anything (hard fail on error).
+# Refs must be [A-Za-z0-9_] only — they become bash var-name suffixes, so a
+# dash (parsed as the ${var-default} operator) or $(...) would corrupt the
+# lookup or execute code. Values are read with indirect expansion, never eval.
 IDENTITY_ERRORS=""
-for ref in $OBS_REFS; do
-    a=$(agent_for_ref "$ref")
-    [ -z "$a" ] && IDENTITY_ERRORS="$IDENTITY_ERRORS
-  obsidian ref '$ref': suffix is not a known agent (_claude/_codex/_pi/_gemini/_cursor_agent)"
-    eval "v=\${OBSIDIAN_KEY_$ref:-}"
-    [ -n "$a" ] && [ -z "$v" ] && IDENTITY_ERRORS="$IDENTITY_ERRORS
-  obsidian ref '$ref': OBSIDIAN_KEY_$ref not found in $SECRETS_FILE"
-done
-for ref in $WATCH_REFS; do
-    a=$(agent_for_ref "$ref")
-    [ -z "$a" ] && IDENTITY_ERRORS="$IDENTITY_ERRORS
-  watch ref '$ref': suffix is not a known agent (_claude/_codex/_pi/_gemini/_cursor_agent)"
-    eval "v=\${OBSIDIAN_WATCH_KEY_$ref:-}"
-    [ -n "$a" ] && [ -z "$v" ] && IDENTITY_ERRORS="$IDENTITY_ERRORS
-  watch ref '$ref': OBSIDIAN_WATCH_KEY_$ref not found in $SECRETS_FILE"
-done
+check_ref() {  # kind  secret_prefix  ref
+    local kind="$1" prefix="$2" ref="$3" var val
+    if ! printf '%s' "$ref" | grep -qE '^[A-Za-z0-9_]+$'; then
+        IDENTITY_ERRORS="$IDENTITY_ERRORS
+  $kind ref '$ref': illegal characters (allowed: letters, digits, underscore)"
+        return
+    fi
+    if [ -z "$(agent_for_ref "$ref")" ]; then
+        IDENTITY_ERRORS="$IDENTITY_ERRORS
+  $kind ref '$ref': suffix is not a known agent (_claude/_codex/_pi/_gemini/_cursor_agent)"
+        return
+    fi
+    var="${prefix}_${ref}"; val="${!var:-}"
+    [ -z "$val" ] && IDENTITY_ERRORS="$IDENTITY_ERRORS
+  $kind ref '$ref': ${var} not found in $SECRETS_FILE"
+}
+for ref in $OBS_REFS;   do check_ref obsidian OBSIDIAN_KEY "$ref"; done
+for ref in $WATCH_REFS; do check_ref watch OBSIDIAN_WATCH_KEY "$ref"; done
 if [ -n "$IDENTITY_ERRORS" ]; then
     echo "Error: manifest identity references failed validation:$IDENTITY_ERRORS"
     exit 1
@@ -150,16 +155,14 @@ fi
 [ -n "${GH_TOKEN:-}" ] && echo "GH_TOKEN=$GH_TOKEN" >> "$KEYS_PATH/common.env"
 chmod 600 "$KEYS_PATH/common.env"
 
-# Identity refs were validated above — compose them (values checked, present)
+# Identity refs were validated above — compose them (indirect expansion, no eval)
 for ref in $OBS_REFS; do
-    a=$(agent_for_ref "$ref")
-    eval "v=\$OBSIDIAN_KEY_$ref"
-    echo "OBSIDIAN_ANNOTATED_KEY=$v" >> "$KEYS_PATH/$a.env"
+    a=$(agent_for_ref "$ref"); var="OBSIDIAN_KEY_${ref}"
+    echo "OBSIDIAN_ANNOTATED_KEY=${!var}" >> "$KEYS_PATH/$a.env"
 done
 for ref in $WATCH_REFS; do
-    a=$(agent_for_ref "$ref")
-    eval "v=\$OBSIDIAN_WATCH_KEY_$ref"
-    echo "ANNOTATED_WATCH_KEY=$v" >> "$KEYS_PATH/$a.env"
+    a=$(agent_for_ref "$ref"); var="OBSIDIAN_WATCH_KEY_${ref}"
+    echo "ANNOTATED_WATCH_KEY=${!var}" >> "$KEYS_PATH/$a.env"
 done
 for f in "$KEYS_PATH"/*.env; do [ -f "$f" ] && chmod 600 "$f"; done
 
