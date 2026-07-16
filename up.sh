@@ -228,6 +228,18 @@ while [ $i -lt 24 ]; do
         exit 1
     fi
     if docker logs "dev-agent-$NAME" 2>&1 | grep -q "firewall active\|firewall DISABLED"; then
+        # The marker persists in logs across restarts, so a crashing boot can
+        # print it too. Confirm the container is actually STABLE: still running
+        # and no new restart 2s later. A crash loop keeps incrementing, so this
+        # catches a container that logged the marker then died.
+        sleep 2
+        CONFIRM_STATUS="$(docker inspect -f '{{.State.Status}}' "dev-agent-$NAME" 2>/dev/null || echo missing)"
+        CONFIRM_RESTARTS="$(docker inspect -f '{{.RestartCount}}' "dev-agent-$NAME" 2>/dev/null || echo 0)"
+        if [ "$CONFIRM_STATUS" != "running" ] || [ "$CONFIRM_RESTARTS" -gt "$BASELINE_RESTARTS" ]; then
+            echo "Error: container crash-loop detected (unstable after readiness marker). Logs:"
+            docker logs "dev-agent-$NAME" 2>&1 | tail -20
+            exit 1
+        fi
         READY=true
         break
     fi

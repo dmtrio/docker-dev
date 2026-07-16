@@ -9,7 +9,10 @@ echo "║        ${CONTAINER_NAME}                 ║"
 echo "╚══════════════════════════════════════════╝"
 
 # ── Persist ~/.claude.json via symlink ────────────────────────────────────────
-su coder -c 'if [ ! -L /home/coder/.claude.json ]; then [ -f /home/coder/.claude.json ] && mv /home/coder/.claude.json /home/coder/.claude/claude.json; ln -sf /home/coder/.claude/claude.json /home/coder/.claude.json; fi'
+# Non-fatal (|| true): a failure here (e.g. an unexpectedly root-owned volume
+# mountpoint) must not crash-loop the container before the firewall runs — it
+# only means claude.json isn't persisted this boot.
+su coder -c 'if [ ! -L /home/coder/.claude.json ]; then [ -f /home/coder/.claude.json ] && mv /home/coder/.claude.json /home/coder/.claude/claude.json; ln -sf /home/coder/.claude/claude.json /home/coder/.claude.json; fi' || true
 
 # ── Egress firewall (default ON — fail loud, never run open) ─────────────────
 if [ "${ENABLE_FIREWALL:-true}" = "true" ]; then
