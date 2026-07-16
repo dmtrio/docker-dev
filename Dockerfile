@@ -128,6 +128,12 @@ RUN mkdir -p /home/$USERNAME/.agent-shims && \
 # resolves the real binaries without an interactive shell.
 ENV PATH="/home/$USERNAME/.agent-shims:/home/$USERNAME/.local/bin:/home/$USERNAME/.fnm/aliases/default/bin:/home/$USERNAME/.fnm:$PATH"
 
+# ENV covers `docker exec` (attach mode) but sshd builds its session env via
+# PAM and ignores it — so SSH sessions (incl. non-interactive `ssh host
+# 'claude -p'`) need the PATH in /etc/environment, which pam_env applies to
+# every SSH session type. $PATH here is the resolved ENV value set above.
+RUN echo "PATH=$PATH" | sudo tee /etc/environment >/dev/null
+
 # Auth/state dirs pre-created as coder so their per-container named volumes
 # initialize with the right ownership on first mount
 RUN mkdir -p /home/$USERNAME/.claude /home/$USERNAME/.codex \

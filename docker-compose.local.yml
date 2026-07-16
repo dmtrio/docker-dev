@@ -18,8 +18,8 @@ services:
         INSTALL_CURSOR: "${INSTALL_CURSOR:-true}"
         INSTALL_AIDER: "${INSTALL_AIDER:-true}"
         INSTALL_CODEX: "${INSTALL_CODEX:-true}"
-    # Shared tag: every local container reuses one image build
-    image: dev-agent:local
+    # Per-container tag: each container builds/uses its own image tag
+    image: dev-agent:${IMAGE_TAG:-local}
 
     container_name: dev-agent-${CONTAINER_NAME}
     hostname: ${CONTAINER_NAME}

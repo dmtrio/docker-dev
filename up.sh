@@ -71,11 +71,8 @@ EGRESS_CIDRS=$(yq -r '(.capabilities.egress_cidrs // []) | join(",")' "$MANIFEST
 SSH_PORT=$(Y '.ssh.port')
 SSH_BIND=$(Y '.ssh.bind'); SSH_BIND="${SSH_BIND:-127.0.0.1}"
 COMPOSE_FILES="-f $SCRIPT_DIR/docker-compose.local.yml"
-if [ -n "$SSH_PORT" ]; then
-    COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.ssh.yml"
-    [ -z "${SSH_AUTHORIZED_KEY:-}" ] && \
-        echo "  ⚠ ssh.port set but SSH_AUTHORIZED_KEY missing from secrets.env — container will refuse to start"
-fi
+[ -n "$SSH_PORT" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.ssh.yml"
+# (the missing-key case is a hard failure just before compose up, below)
 OBS_REFS=$(yq -r '(.identities.obsidian // []) | join(" ")' "$MANIFEST")
 WATCH_REFS=$(yq -r '(.identities.watch // []) | join(" ")' "$MANIFEST")
 
@@ -111,8 +108,11 @@ check_ref() {  # kind  secret_prefix  ref
         return
     fi
     var="${prefix}_${ref}"; val="${!var:-}"
-    [ -z "$val" ] && IDENTITY_ERRORS="$IDENTITY_ERRORS
+    if [ -z "$val" ]; then
+        IDENTITY_ERRORS="$IDENTITY_ERRORS
   $kind ref '$ref': ${var} not found in $SECRETS_FILE"
+    fi
+    return 0  # never let a false test become the function's exit (set -e)
 }
 for ref in $OBS_REFS;   do check_ref obsidian OBSIDIAN_KEY "$ref"; done
 for ref in $WATCH_REFS; do check_ref watch OBSIDIAN_WATCH_KEY "$ref"; done
@@ -182,6 +182,11 @@ else
     USER_UID=1000; USER_GID=1000
 fi
 
+# ── SSH preflight check ──────────────────────────────────────────────────────
+if [ -n "$SSH_PORT" ] && [ -z "${SSH_AUTHORIZED_KEY:-}" ]; then
+    echo "Error: manifest has ssh.port but SSH_AUTHORIZED_KEY is missing from secrets.env"; exit 1
+fi
+
 # ── Apply ─────────────────────────────────────────────────────────────────────
 echo "Applying containers/$NAME.yml → dev-agent-$NAME"
 echo "  ports='${HOST_MCP_PORTS:-none}' egress='${EGRESS:-none}' mem=$MEM_LIMIT"
@@ -197,21 +202,44 @@ HOST_MCP_PORTS="$HOST_MCP_PORTS" EXTRA_ALLOWED_DOMAINS="$EGRESS" \
 ALLOWED_CIDRS="$EGRESS_CIDRS" \
 KEYS_PATH="$KEYS_PATH" ARTIFACTS_PATH="$ARTIFACTS_PATH" MEM_LIMIT="$MEM_LIMIT" \
 SSH_PORT="$SSH_PORT" SSH_BIND="$SSH_BIND" SSH_AUTHORIZED_KEY="${SSH_AUTHORIZED_KEY:-}" \
+IMAGE_TAG="$NAME" \
 docker compose -p "dev-agent-$NAME" $COMPOSE_FILES up -d --build
 
 # ── Wait for entrypoint/firewall ──────────────────────────────────────────────
+# Crash-loop detection compares against the restart count captured now (0 for
+# a freshly (re)created container; the current value for a healthy no-op
+# re-up). A rise DURING the wait = a crash loop this run — which also catches
+# the SSH-missing-key case where 'firewall active' prints before the fatal
+# exit (the marker alone would falsely read as success).
+BASELINE_RESTARTS="$(docker inspect -f '{{.RestartCount}}' "dev-agent-$NAME" 2>/dev/null || echo 0)"
 i=0
+READY=false
 while [ $i -lt 24 ]; do
     STATUS="$(docker inspect -f '{{.State.Status}}' "dev-agent-$NAME" 2>/dev/null || echo missing)"
-    if [ "$STATUS" = "exited" ] || [ "$STATUS" = "missing" ]; then
+    if [ "$STATUS" = "exited" ] || [ "$STATUS" = "missing" ] || [ "$STATUS" = "restarting" ]; then
         echo "Error: container failed to start. Logs:"
         docker logs "dev-agent-$NAME" 2>&1 | tail -20
         exit 1
     fi
-    docker logs "dev-agent-$NAME" 2>&1 | grep -q "firewall active\|firewall DISABLED" && break
+    RESTART_COUNT="$(docker inspect -f '{{.RestartCount}}' "dev-agent-$NAME" 2>/dev/null || echo 0)"
+    if [ "$RESTART_COUNT" -gt "$BASELINE_RESTARTS" ]; then
+        echo "Error: container crash-loop detected (restarts rose to $RESTART_COUNT). Logs:"
+        docker logs "dev-agent-$NAME" 2>&1 | tail -20
+        exit 1
+    fi
+    if docker logs "dev-agent-$NAME" 2>&1 | grep -q "firewall active\|firewall DISABLED"; then
+        READY=true
+        break
+    fi
     sleep 5
     i=$((i + 1))
 done
+
+if [ "$READY" = "false" ]; then
+    echo "Error: container did not reach readiness (timeout). Logs:"
+    docker logs "dev-agent-$NAME" 2>&1 | tail -20
+    exit 1
+fi
 
 # ── Bootstrap workspace (idempotent) ──────────────────────────────────────────
 if [ -n "$REPO_URL" ]; then
@@ -309,7 +337,7 @@ docker exec -u coder "dev-agent-$NAME" bash -c '
 SERVERS=$(jq -c "[.mcpServers | keys[]]" /workspace/main/.mcp.json)
 [ -f /home/coder/.claude.json ] || echo "{}" > /home/coder/.claude.json
 jq --argjson s "$SERVERS" ".projects[\"/workspace/main\"].enabledMcpjsonServers = \$s | .projects[\"/workspace/main\"].hasTrustDialogAccepted = true" \
-    /home/coder/.claude.json > /tmp/cj.json && mv /tmp/cj.json /home/coder/.claude.json
+    /home/coder/.claude.json > /tmp/cj.json && cat /tmp/cj.json > /home/coder/.claude.json && rm -f /tmp/cj.json
 echo "  ✓ MCP servers pre-approved for claude ($(echo "$SERVERS" | jq -r "join(\", \")"))"
 '
 

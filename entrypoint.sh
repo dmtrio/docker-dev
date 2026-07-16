@@ -8,6 +8,9 @@ echo "║        Agent Dev Container         ║"
 echo "║        ${CONTAINER_NAME}                 ║"
 echo "╚══════════════════════════════════════════╝"
 
+# ── Persist ~/.claude.json via symlink ────────────────────────────────────────
+su coder -c 'if [ ! -L /home/coder/.claude.json ]; then [ -f /home/coder/.claude.json ] && mv /home/coder/.claude.json /home/coder/.claude/claude.json; ln -sf /home/coder/.claude/claude.json /home/coder/.claude.json; fi'
+
 # ── Egress firewall (default ON — fail loud, never run open) ─────────────────
 if [ "${ENABLE_FIREWALL:-true}" = "true" ]; then
     if /usr/local/bin/init-firewall.sh; then
@@ -25,11 +28,11 @@ fi
 
 # ── Git config ────────────────────────────────────────────────────────────────
 if [ -n "$GIT_USER_NAME" ]; then
-    su -c "git config --global user.name '$GIT_USER_NAME'" coder
+    GIT_USER_NAME="$GIT_USER_NAME" su coder -c 'git config --global user.name "$GIT_USER_NAME"'
     echo "✓ Git user.name: $GIT_USER_NAME"
 fi
 if [ -n "$GIT_USER_EMAIL" ]; then
-    su -c "git config --global user.email '$GIT_USER_EMAIL'" coder
+    GIT_USER_EMAIL="$GIT_USER_EMAIL" su coder -c 'git config --global user.email "$GIT_USER_EMAIL"'
     echo "✓ Git user.email: $GIT_USER_EMAIL"
 fi
 

@@ -3,9 +3,10 @@
 # Adapted from anthropics/claude-code .devcontainer/init-firewall.sh.
 #
 # Default-denies all outbound traffic except an ipset allowlist (GitHub IP
-# ranges + resolved domains), DNS, outbound SSH, and loopback. Verifies
-# itself at the end and exits non-zero on any failure — the entrypoint
-# treats that as fatal so the container never runs with open egress.
+# ranges + dnsmasq-resolved zones), DNS to the container's own resolvers,
+# and loopback. Verifies itself at the end (including a dnsmasq-only zone)
+# and exits non-zero on any failure — the entrypoint treats that as fatal
+# so the container never runs with open egress.
 #
 # Requires: NET_ADMIN + NET_RAW capabilities; iptables, ipset, dig, jq,
 # aggregate, curl (installed in the Dockerfile).
@@ -45,11 +46,9 @@ else
 fi
 
 # First allow DNS and localhost before any restrictions
-iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+iptables -A OUTPUT -p udp --dport 53 -d 127.0.0.11 -j ACCEPT
+iptables -A OUTPUT -p udp --dport 53 -d 127.0.0.1 -j ACCEPT
 iptables -A INPUT -p udp --sport 53 -j ACCEPT
-# Outbound SSH (git over ssh)
-iptables -A OUTPUT -p tcp --dport 22 -j ACCEPT
-iptables -A INPUT -p tcp --sport 22 -m state --state ESTABLISHED -j ACCEPT
 # Localhost
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
@@ -107,6 +106,7 @@ githubusercontent.com
 ubuntu.com
 visualstudio.com
 vscode.download.prss.microsoft.com
+vsassets.io
 "
 
 # Per-container additions
@@ -179,6 +179,11 @@ iptables -P OUTPUT DROP
 iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
+# Allow inbound SSH when enabled
+if [ "${SSH_ENABLED:-false}" = "true" ]; then
+    iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+fi
+
 # Allow outbound traffic to allowed domains
 iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
 
@@ -217,4 +222,11 @@ if ! curl --connect-timeout 5 https://api.github.com/zen >/dev/null 2>&1; then
     exit 1
 else
     echo "Firewall verification passed - able to reach https://api.github.com as expected"
+fi
+
+if ! curl --connect-timeout 5 https://registry.npmjs.org >/dev/null 2>&1; then
+    echo "ERROR: dnsmasq ipset mirroring not working - registry.npmjs.org unreachable"
+    exit 1
+else
+    echo "Firewall verification passed - dnsmasq zone (registry.npmjs.org) reachable"
 fi
