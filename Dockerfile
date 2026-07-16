@@ -153,7 +153,7 @@ RUN sudo mkdir -p /workspace && sudo chown $USERNAME:$USERNAME /workspace
 WORKDIR /workspace
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
-COPY --chown=$USERNAME:$USERNAME entrypoint.sh /home/$USERNAME/entrypoint.sh
+COPY --chown=$USERNAME:$USERNAME src/entrypoint.sh /home/$USERNAME/entrypoint.sh
 RUN chmod +x /home/$USERNAME/entrypoint.sh
 
 # Back to root for the entrypoint (drops to coder context / runs sshd)
@@ -165,7 +165,7 @@ RUN apt-get update && apt-get install -y \
     iptables ipset iproute2 dnsutils aggregate dnsmasq \
     && rm -rf /var/lib/apt/lists/*
 
-COPY init-firewall.sh /usr/local/bin/init-firewall.sh
+COPY src/init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh
 
 # ── SSH server (always installed, runs only when SSH_ENABLED=true) ──────────
