@@ -81,6 +81,18 @@ if [ "$SSH_ENABLED" = "true" ]; then
         echo "✓ SSH host keys generated"
     fi
 
+    # RFC 04: sshd builds each session's env via PAM (/etc/environment) and
+    # ignores container env — persist the remote-access vars there so login
+    # shells (and the tmux server/hooks they start) can see them. mosh
+    # sessions inherit from their SSH bootstrap, so this covers both.
+    for var in REMOTE_TMUX MOSH_PORTS NTFY_URL NTFY_TOPIC CONTAINER_NAME; do
+        val="${!var:-}"
+        [ -n "$val" ] || continue
+        sed -i "/^$var=/d" /etc/environment
+        echo "$var=$val" >> /etc/environment
+    done
+    [ "${REMOTE_TMUX:-false}" = "true" ] && echo "✓ Remote access: SSH/mosh logins land in tmux session 'agent'"
+
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Container:  dev-agent-${CONTAINER_NAME}   (sshd on :22, published"

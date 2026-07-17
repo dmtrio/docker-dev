@@ -232,6 +232,14 @@ COPY --chown=$USERNAME:$USERNAME src/tmux.conf /home/$USERNAME/.tmux.conf
 COPY src/mosh-server-wrapper.sh /usr/local/bin/mosh-server
 RUN chmod +x /usr/local/bin/mosh-server
 
+# Land interactive SSH/mosh logins in the shared tmux session. The logic
+# lives in a sourced file (lintable, readable); the hook must be the LAST
+# line of .bashrc so fnm/shim PATH setup has already run when tmux execs.
+COPY src/tmux-landing.bashrc /usr/local/share/tmux-landing.bashrc
+RUN echo '' >> /home/$USERNAME/.bashrc \
+    && echo '# RFC 04: SSH/mosh logins land in a shared tmux session (keep last)' >> /home/$USERNAME/.bashrc \
+    && echo '[ -f /usr/local/share/tmux-landing.bashrc ] && . /usr/local/share/tmux-landing.bashrc' >> /home/$USERNAME/.bashrc
+
 # VS Code / Cursor "Attach to Running Container" reads this: attach as
 # coder (not root) and open /workspace by default.
 LABEL devcontainer.metadata='{"remoteUser":"coder","workspaceFolder":"/workspace"}'
