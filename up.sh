@@ -273,6 +273,14 @@ if [ -n "$SSH_PORT" ] && [ -z "${SSH_AUTHORIZED_KEY:-}" ]; then
     echo "Error: manifest has ssh.port but SSH_AUTHORIZED_KEY is missing from secrets.env"; exit 1
 fi
 
+# ── Shared network (all containers; single CIDR for VPN/tunnel targeting) ───
+# One user-defined bridge with a stable subnet (override via DEV_AGENT_SUBNET
+# in ./.env). Existing containers adopt it on their next recreate.
+if ! docker network inspect dev-agent-net >/dev/null 2>&1; then
+    echo "Creating shared network dev-agent-net (${DEV_AGENT_SUBNET:-172.30.0.0/24})"
+    docker network create --subnet "${DEV_AGENT_SUBNET:-172.30.0.0/24}" dev-agent-net >/dev/null
+fi
+
 # ── Apply ─────────────────────────────────────────────────────────────────────
 echo "Applying containers/$NAME.yml → dev-agent-$NAME"
 REMOTE_SUMMARY=""
@@ -516,4 +524,8 @@ echo "  VS Code / Cursor:  Dev Containers: Attach to Running Container"
 echo "  Terminal:          docker exec -it -u coder dev-agent-$NAME bash"
 echo "  Claude:            cd /workspace/main && claude"
 [ -n "$SSH_PORT" ] && echo "  SSH:               ssh -p $SSH_PORT coder@$( [ "$SSH_BIND" = "127.0.0.1" ] && echo localhost || echo '<this-host>' )"
+if [ "$REMOTE_TMUX" = "true" ] || [ "$REMOTE_MOSH" = "true" ]; then
+    TUNNEL_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "dev-agent-$NAME" 2>/dev/null || true)"
+    echo "  Remote (tunnel):   ${TUNNEL_IP:-<no ip>} — $( [ "$REMOTE_MOSH" = "true" ] && echo "mosh coder@ip (UDP 60000-60010)" || echo "ssh coder@ip" ) over your WireGuard/VPN"
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
