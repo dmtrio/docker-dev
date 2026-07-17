@@ -212,6 +212,43 @@ RUN apt-get update && apt-get install -y openssh-server \
 
 ENV SSH_ENABLED=false
 
+# ── Remote session tools: tmux + mosh (RFC 04) ───────────────────────────────
+# tmux gives every SSH-reachable container one durable, shared session (both
+# phone and laptop attach to the same view; agents survive disconnects). mosh
+# rides UDP for flaky mobile networks — reached only over the operator's
+# WireGuard/VPN tunnel, never a public listener. mosh requires a UTF-8
+# locale — update-locale writes /etc/default/locale, which PAM reads for
+# SSH sessions (the ENV below only covers entrypoint/docker-exec processes;
+# sshd builds its env from PAM and would otherwise run C/POSIX and make
+# mosh-server abort with 'needs a UTF-8 native locale').
+RUN apt-get update && apt-get install -y \
+    tmux mosh locales \
+    && rm -rf /var/lib/apt/lists/* \
+    && locale-gen en_US.UTF-8 \
+    && update-locale LANG=en_US.UTF-8
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+COPY --chown=$USERNAME:$USERNAME src/tmux.conf /home/$USERNAME/.tmux.conf
+
+# Pin mosh-server to the firewalled/published UDP range: /usr/local/bin wins
+# over /usr/bin, so the client-launched `mosh-server new` resolves to the
+# wrapper regardless of client configuration.
+COPY src/mosh-server-wrapper.sh /usr/local/bin/mosh-server
+RUN chmod +x /usr/local/bin/mosh-server
+
+# Agent-blind idle notifier: tmux.conf's silence hook runs it when NTFY_URL
+# is present in the environment (remote.notify: ntfy).
+COPY src/tmux-notify.sh /usr/local/bin/tmux-notify.sh
+RUN chmod +x /usr/local/bin/tmux-notify.sh
+
+# Land interactive SSH/mosh logins in the shared tmux session. The logic
+# lives in a sourced file (lintable, readable); the hook must be the LAST
+# line of .bashrc so fnm/shim PATH setup has already run when tmux execs.
+COPY src/tmux-landing.bashrc /usr/local/share/tmux-landing.bashrc
+RUN echo '' >> /home/$USERNAME/.bashrc \
+    && echo '# RFC 04: SSH/mosh logins land in a shared tmux session (keep last)' >> /home/$USERNAME/.bashrc \
+    && echo '. /usr/local/share/tmux-landing.bashrc' >> /home/$USERNAME/.bashrc
+
 # VS Code / Cursor "Attach to Running Container" reads this: attach as
 # coder (not root) and open /workspace by default.
 LABEL devcontainer.metadata='{"remoteUser":"coder","workspaceFolder":"/workspace"}'

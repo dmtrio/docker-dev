@@ -180,9 +180,10 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
 - `update-agent-keys.sh` — temporary per-agent key override; durable changes
   go in secrets.env
 - `secrets.env.example` — template for your `secrets.env`
-- `.env` (gitignored) — optional `DEV_AGENT_HOME` / `RULES_PATH` overrides
-- `docker-compose.ssh.yml` — overlay applied automatically when a manifest
-  has an `ssh:` section
+- `.env` (gitignored) — optional `DEV_AGENT_HOME` / `RULES_PATH` /
+  `DEV_AGENT_SUBNET` overrides
+- `docker-compose.ssh.yml` / `docker-compose.mosh.yml` — overlays applied
+  automatically for a manifest's `ssh:` / `remote.mosh` settings
 - `script.md` — every script, grouped by lifecycle
 
 ## Remote hosts: homelab (Unraid) & VPS
@@ -207,7 +208,38 @@ Same system, same files, one addition. On any Linux box with Docker:
    rules, artifacts) behaves exactly the same.
 
 Never expose sshd publicly: keep the bind on loopback (or a tunnel
-interface) and front it with Pangolin / Tailscale / WireGuard. Host MCP
+interface) and front it with your WireGuard/VPN tunnel. Host MCP
 capabilities (`gateway`/`proxyman`/`browser`) are Mac-desktop services —
 on headless hosts leave them `false` or run the gateway service on that
 host.
+
+## Remote agent access (phone / second device)
+
+The `remote:` manifest block (requires `ssh:`) turns an SSH-reachable
+container into something you can drive from a phone — start a task, walk
+away, get pinged when the agent needs you, answer from anywhere. Works for
+every agent in the image; nothing is vendor-hosted or public-facing.
+
+```yaml
+ssh:     { port: 2222, bind: 127.0.0.1 }
+remote:  { tmux: true, mosh: true, notify: ntfy }
+```
+
+- **tmux** — interactive SSH/mosh logins land attached to one durable
+  session (`agent`). Phone and laptop share the same view; agents survive
+  disconnects. `docker exec` and editor terminals are exempt.
+- **mosh** — a per-manifest UDP range (`remote.mosh_ports`, default
+  60000:60010; disjoint per container, like `ssh.port`), published next to
+  sshd with the same bind rules and pinned server-side. Survives phone
+  sleep and WiFi↔cellular switches; use a mosh-capable client (e.g. Moshi
+  or Blink on iOS).
+- **notify: ntfy** — an agent-blind monitor pushes to your ntfy topic when
+  the session goes idle at a prompt and nobody is attached. Set `NTFY_URL`
+  (+ optional `NTFY_TOPIC`) in `secrets.env`; the host is auto-allowlisted.
+
+**Reach.** All containers sit on one shared bridge (`dev-agent-net`,
+`172.30.0.0/24` by default, `DEV_AGENT_SUBNET` in `./.env` to override;
+created automatically by `up.sh`). Point your WireGuard/VPN layer at that
+CIDR once and every container is reachable at its bridge IP from any
+enrolled device — `up.sh` prints the IP in its summary. sshd and the mosh
+range stay loopback/tunnel-only; nothing listens publicly.

@@ -94,3 +94,15 @@ volumes:
   gemini-state:
   cursor-state:
   gh-auth:
+
+# Shared bridge (RFC 04): every dev-agent container joins ONE user-defined
+# network with a stable subnet instead of a per-project default network, so
+# a WireGuard/VPN layer on the host can target the whole fleet as a single
+# CIDR and reach any container. up.sh creates it if missing (external: true
+# keeps compose from making per-project copies). Containers on it can see
+# each other at L3 — accepted under the single-operator trust model; each
+# container's egress firewall still governs its own traffic.
+networks:
+  default:
+    name: dev-agent-net
+    external: true

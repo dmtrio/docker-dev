@@ -171,11 +171,15 @@ fi
 HOST_NETWORK=$(echo "$HOST_IP" | sed "s/\.[0-9]*$/.0\/24/")
 echo "Host network detected as: $HOST_NETWORK"
 
-# INBOUND from the host network stays open (published ports arrive via the
-# gateway proxy). OUTBOUND to the host network is deliberately NOT opened
-# wholesale — on plain Linux the gateway IS the host, and a blanket rule
-# would defeat the HOST_MCP_PORTS opt-in below.
-iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
+# INBOUND from the GATEWAY IP stays open (published-port traffic arrives via
+# the gateway proxy, whose source is the gateway address). Deliberately NOT
+# the whole subnet: on the shared dev-agent-net bridge the /24 is the entire
+# fleet, and a subnet-wide ACCEPT would let any sibling container reach this
+# one's listeners — cross-container isolation must not rest on the sibling's
+# own (agent-editable) OUTPUT chain. OUTBOUND to the host network is likewise
+# NOT opened wholesale — a blanket rule would defeat the HOST_MCP_PORTS
+# opt-in below.
+iptables -A INPUT -s "$HOST_IP" -j ACCEPT
 
 # Set default policies to DROP first
 iptables -P INPUT DROP
@@ -189,6 +193,18 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 # Allow inbound SSH when enabled
 if [ "${SSH_ENABLED:-false}" = "true" ]; then
     iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+fi
+
+# Inbound mosh UDP range when enabled (RFC 04). Set by the mosh compose
+# overlay; reached only over the operator's WireGuard/VPN tunnel — the
+# range is never published on a public interface.
+if [ "${SSH_ENABLED:-false}" = "true" ] && [ -n "${MOSH_PORTS:-}" ]; then
+    if [[ ! "$MOSH_PORTS" =~ ^[0-9]+:[0-9]+$ ]]; then
+        echo "ERROR: Invalid MOSH_PORTS (want START:END): $MOSH_PORTS"
+        exit 1
+    fi
+    echo "Allowing inbound mosh UDP $MOSH_PORTS"
+    iptables -A INPUT -p udp --dport "$MOSH_PORTS" -j ACCEPT
 fi
 
 # Allow outbound traffic to allowed domains

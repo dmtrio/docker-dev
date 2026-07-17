@@ -1,8 +1,8 @@
 # docker-compose.ssh.yml — overlay added by up.sh when the manifest has an
 # ssh: section. Publishes the container's sshd and enables it at runtime.
 # Never public-facing by itself: bind defaults to 127.0.0.1; on a remote
-# host set ssh.bind in the manifest deliberately (and front with a tunnel —
-# Pangolin/Tailscale/WireGuard — not the open internet).
+# host set ssh.bind in the manifest deliberately (and front with your
+# WireGuard/VPN tunnel — not the open internet).
 
 services:
   dev-agent:
@@ -11,3 +11,12 @@ services:
     environment:
       - SSH_ENABLED=true
       - SSH_AUTHORIZED_KEY=${SSH_AUTHORIZED_KEY:-}
+      # RFC 04: land interactive SSH/mosh logins in a durable shared tmux
+      # session (the entrypoint persists this into /etc/environment so
+      # PAM-built SSH session envs see it).
+      - REMOTE_TMUX=${REMOTE_TMUX:-false}
+      # RFC 04 notify: set only when the manifest has remote.notify: ntfy
+      # (up.sh passes them through; empty otherwise). The tmux silence hook
+      # arms itself off NTFY_URL's presence.
+      - NTFY_URL=${NTFY_URL:-}
+      - NTFY_TOPIC=${NTFY_TOPIC:-}
