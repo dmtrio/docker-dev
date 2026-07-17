@@ -67,6 +67,34 @@ CAP_BROWSER=$(yq '.capabilities.browser // false' "$MANIFEST")
 EGRESS=$(yq -r '(.capabilities.egress // []) | join(",")' "$MANIFEST")
 EGRESS_CIDRS=$(yq -r '(.capabilities.egress_cidrs // []) | join(",")' "$MANIFEST")
 
+# Plugins: baked-in local stdio MCP tools, one plugins/<name>.yml each (see
+# that dir). Binaries are baked into the image at build; listing a name here
+# only WIRES it for this container (mcp entry + egress). Validate every name
+# before touching anything: names become file paths, so restrict the charset,
+# and a listed plugin without a file is a manifest typo — hard-fail.
+# The tag check catches the natural scalar typo (plugins: serena), which
+# would otherwise die inside yq's join() with a cryptic error.
+if [ "$(yq '.plugins // [] | tag' "$MANIFEST")" != "!!seq" ]; then
+    echo "Error: manifest plugins: must be a list, e.g. plugins: [serena]"; exit 1
+fi
+PLUGINS=$(yq -r '(.plugins // []) | join(" ")' "$MANIFEST")
+PLUGIN_ERRORS=""
+for p in $PLUGINS; do
+    if ! printf '%s' "$p" | grep -qE '^[A-Za-z0-9_-]+$'; then
+        PLUGIN_ERRORS="$PLUGIN_ERRORS
+  plugin '$p': illegal characters (allowed: letters, digits, underscore, dash)"
+        continue
+    fi
+    if [ ! -f "$SCRIPT_DIR/plugins/$p.yml" ]; then
+        PLUGIN_ERRORS="$PLUGIN_ERRORS
+  plugin '$p': no plugin file at plugins/$p.yml"
+    fi
+done
+if [ -n "$PLUGIN_ERRORS" ]; then
+    echo "Error: manifest plugins failed validation:$PLUGIN_ERRORS"
+    exit 1
+fi
+
 # Optional ssh: section — same image/manifest everywhere; SSH is just a
 # deploy capability (homelab/VPS editor access via Remote-SSH).
 SSH_PORT=$(Y '.ssh.port')
@@ -128,10 +156,40 @@ HOST_MCP_PORTS=""
 [ "$CAP_BROWSER" = "true" ]  && HOST_MCP_PORTS="$HOST_MCP_PORTS,8814"
 HOST_MCP_PORTS="${HOST_MCP_PORTS#,}"
 
+# Append a domain to EGRESS if not already present. -F: the domain is a
+# literal, not a regex — an unescaped dot would let lookalike entries
+# (api-foo.com vs api.foo.com) falsely satisfy the check and silently drop
+# the real domain from the firewall list.
+add_egress_domain() {
+    echo ",$EGRESS," | grep -qF ",$1," || EGRESS="${EGRESS:+$EGRESS,}$1"
+}
+
 # Obsidian identities imply the Annotated endpoint in the egress allowlist
-if [ -n "$OBS_REFS" ] && ! echo ",$EGRESS," | grep -q ",mcp-obsidian.dmetr.io,"; then
-    EGRESS="${EGRESS:+$EGRESS,}mcp-obsidian.dmetr.io"
-fi
+[ -n "$OBS_REFS" ] && add_egress_domain mcp-obsidian.dmetr.io
+
+# Fold each enabled plugin's egress into the firewall list, and collect its
+# mcp block as one-line JSON (host side only extracts — the additive merge
+# into .mcp.json runs in-container with jq, keeping the host dependency at
+# just yq). Entries accumulate newline-separated for a later `jq -s add`.
+# Egress entries are validated as bare hostnames (same rule as
+# allow-egress.sh): junk would otherwise ride into dnsmasq.conf and
+# crash-loop the container at boot with only a generic firewall error.
+# set -f: the unquoted expansion must not glob a wildcard entry like
+# *.foo.com against the CWD — let it reach validation and fail by name.
+PLUGIN_MCP_ENTRIES=""
+set -f
+for p in $PLUGINS; do
+    for d in $(yq -r '(.egress // []) | join(" ")' "$SCRIPT_DIR/plugins/$p.yml"); do
+        if ! printf '%s' "$d" | grep -qE '^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]{0,61}[A-Za-z0-9]$'; then
+            echo "Error: plugin '$p' egress entry '$d' is not a bare hostname (no scheme, path, port, or wildcard — a domain already covers its subdomains)"
+            exit 1
+        fi
+        add_egress_domain "$d"
+    done
+    PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES$(yq -o=json -I=0 '.mcp // {}' "$SCRIPT_DIR/plugins/$p.yml")
+"
+done
+set +f
 
 # ── Compose derived credentials (keys/<name>/ is rebuilt from scratch) ───────
 KEYS_PATH="$BASE_PATH/keys/$NAME"
@@ -200,7 +258,7 @@ fi
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
 echo "Applying containers/$NAME.yml → dev-agent-$NAME"
-echo "  ports='${HOST_MCP_PORTS:-none}' egress='${EGRESS:-none}' mem=$MEM_LIMIT"
+echo "  ports='${HOST_MCP_PORTS:-none}' egress='${EGRESS:-none}' plugins='${PLUGINS:-none}' mem=$MEM_LIMIT"
 
 CONTAINER_NAME="$NAME" \
 USER_UID="$USER_UID" USER_GID="$USER_GID" \
@@ -324,6 +382,7 @@ for ref in $OBS_REFS; do [ "$(agent_for_ref "$ref")" = "claude" ] && HAS_OBSIDIA
 docker exec -u coder \
     -e WANT_GATEWAY="$CAP_GATEWAY" -e WANT_PROXYMAN="$CAP_PROXYMAN" \
     -e WANT_BROWSER="$CAP_BROWSER" -e WANT_OBSIDIAN="$HAS_OBSIDIAN" \
+    -e PLUGIN_MCP="$PLUGIN_MCP_ENTRIES" \
     "dev-agent-$NAME" bash -c '
 set -e
 # Gate on the repo (.git), not just the dir: the entrypoint always creates an
@@ -335,7 +394,7 @@ if [ ! -d /workspace/main/.git ]; then
     exit 0
 fi
 if [ -f /workspace/main/.mcp.json ] && [ ! -f /workspace/.mcp.generated ]; then
-    echo "  (repo ships its own .mcp.json — leaving it alone)"
+    echo "  (repo ships its own .mcp.json — leaving it alone; manifest capabilities/plugins are NOT merged into it)"
     exit 0
 fi
 J="{\"mcpServers\":{}}"
@@ -350,6 +409,24 @@ if [ "$WANT_BROWSER" = "true" ]; then
 fi
 if [ "$WANT_OBSIDIAN" = "true" ]; then
   J=$(echo "$J" | jq ".mcpServers.\"obsidian-annotated\" = {type:\"http\",url:\"https://mcp-obsidian.dmetr.io/mcp\",headers:{Authorization:\"Bearer \${OBSIDIAN_ANNOTATED_KEY}\"}}")
+fi
+# Plugins: PLUGIN_MCP is newline-separated one-line JSON objects (one per
+# enabled plugin, extracted host-side with yq). Slurp-add merges them into a
+# single object, then fold that into mcpServers additively. Both merges are
+# last-wins, so name collisions — two plugins sharing a server name, or a
+# plugin shadowing a generated capability server (and inheriting its
+# pre-approval) — must hard-fail instead of silently replacing an entry.
+if [ -n "$PLUGIN_MCP" ]; then
+  DUP=$(printf "%s" "$PLUGIN_MCP" | jq -rs "[.[] | keys[]] | group_by(.) | map(select(length > 1) | .[0]) | join(\", \")")
+  if [ -n "$DUP" ]; then
+    echo "Error: multiple enabled plugins define the same MCP server name(s): $DUP"; exit 1
+  fi
+  PLUGINS_OBJ=$(printf "%s" "$PLUGIN_MCP" | jq -s "add // {}")
+  CLASH=$(echo "$J" | jq -r --argjson p "$PLUGINS_OBJ" "(.mcpServers | keys) as \$k | \$p | keys | map(select(. as \$n | \$k | index(\$n))) | join(\", \")")
+  if [ -n "$CLASH" ]; then
+    echo "Error: plugin MCP server name(s) collide with generated servers: $CLASH"; exit 1
+  fi
+  J=$(echo "$J" | jq --argjson p "$PLUGINS_OBJ" ".mcpServers += \$p")
 fi
 echo "$J" | jq . > /workspace/main/.mcp.json
 touch /workspace/.mcp.generated

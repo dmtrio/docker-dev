@@ -44,6 +44,15 @@ capabilities:
   egress_cidrs: []                 # IP-range escape hatch, e.g. LAN subnets:
                                    #   [192.168.35.0/24, 192.168.20.0/24]
 
+# Baked-in plugins — local stdio MCP tools that run INSIDE the container (no
+# host service, no port, no secret; contrast with capabilities above). Each
+# name maps to plugins/<name>.yml in this repo: its binary is already baked
+# into the shared image at build; listing it here wires its MCP server into
+# Claude's .mcp.json (auto-approved) and its egress domains into this
+# container's firewall. Unlisted plugins stay dormant in the image.
+#   plugins: [serena]              # semantic code retrieval + editing over LSP
+plugins: []
+
 # Per-agent identities — EXPLICIT references to secrets.env names.
 # An entry R reads OBSIDIAN_KEY_R (obsidian) or OBSIDIAN_WATCH_KEY_R (watch);
 # the agent it belongs to is R's suffix: _claude, _codex, _pi, _gemini,
