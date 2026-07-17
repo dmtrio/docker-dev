@@ -116,9 +116,32 @@ case "$REMOTE_NOTIFY" in
     ""|ntfy) ;;
     *) echo "Error: remote.notify must be 'ntfy' (got '$REMOTE_NOTIFY')"; exit 1 ;;
 esac
+# The whole notify chain lives inside the tmux server that only remote.tmux
+# auto-starts — notify without tmux would be a notifier that never fires.
+if [ -n "$REMOTE_NOTIFY" ] && [ "$REMOTE_TMUX" != "true" ]; then
+    echo "Error: remote.notify requires remote.tmux: true (the idle monitor runs inside the tmux session)"; exit 1
+fi
+
 # mosh gets its own overlay: the UDP range publish must not exist for
 # containers that didn't opt in (compose can't publish conditionally).
-[ "$REMOTE_MOSH" = "true" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.mosh.yml"
+# The range is per-manifest (remote.mosh_ports, START:END) because the host
+# publish is per-host-port — two mosh containers on one host need disjoint
+# ranges, exactly like ssh.port. up.sh is the single source: the overlay's
+# publish + env, the in-image wrapper, and the firewall all derive from it.
+MOSH_PORTS=""
+MOSH_PORTS_DASH=""
+if [ "$REMOTE_MOSH" = "true" ]; then
+    MOSH_PORTS=$(Y '.remote.mosh_ports'); MOSH_PORTS="${MOSH_PORTS:-60000:60010}"
+    if ! printf '%s' "$MOSH_PORTS" | grep -qE '^[0-9]{1,5}:[0-9]{1,5}$'; then
+        echo "Error: remote.mosh_ports must be START:END (got '$MOSH_PORTS')"; exit 1
+    fi
+    MOSH_LO="${MOSH_PORTS%%:*}"; MOSH_HI="${MOSH_PORTS##*:}"
+    if [ "$MOSH_LO" -gt "$MOSH_HI" ] || [ "$MOSH_HI" -gt 65535 ] || [ "$MOSH_LO" -lt 1024 ]; then
+        echo "Error: remote.mosh_ports '$MOSH_PORTS' out of range (need 1024 <= START <= END <= 65535)"; exit 1
+    fi
+    MOSH_PORTS_DASH="$MOSH_LO-$MOSH_HI"
+    COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.mosh.yml"
+fi
 OBS_REFS=$(yq -r '(.identities.obsidian // []) | join(" ")' "$MANIFEST")
 WATCH_REFS=$(yq -r '(.identities.watch // []) | join(" ")' "$MANIFEST")
 
@@ -214,10 +237,25 @@ set +f
 CONTAINER_NTFY_URL=""; CONTAINER_NTFY_TOPIC=""
 if [ "$REMOTE_NOTIFY" = "ntfy" ]; then
     [ -n "${NTFY_URL:-}" ] || { echo "Error: manifest has remote.notify: ntfy but NTFY_URL is missing from $SECRETS_FILE"; exit 1; }
-    NTFY_HOST=$(printf '%s' "$NTFY_URL" | sed -E 's|^[A-Za-z]+://||; s|/.*$||; s|:.*$||')
+    # The value travels via /etc/environment, whose PAM parser truncates at
+    # '#' and strips quotes — refuse values that would be silently mangled.
+    case "$NTFY_URL" in
+        *'#'*|*'"'*|*"'"*) echo "Error: NTFY_URL must be a bare origin (no '#', quotes) — put the topic in NTFY_TOPIC"; exit 1 ;;
+    esac
+    # Host = URL minus scheme, path, userinfo, port (in that order — the
+    # path strip must precede the userinfo strip so an '@' in a path can't
+    # masquerade as userinfo).
+    NTFY_HOST=$(printf '%s' "$NTFY_URL" | sed -E 's|^[A-Za-z]+://||; s|/.*$||; s|^.*@||; s|:[0-9]+$||')
     [ -n "$NTFY_HOST" ] || { echo "Error: cannot parse a host from NTFY_URL '$NTFY_URL'"; exit 1; }
-    if ! echo ",$EGRESS," | grep -qF ",$NTFY_HOST,"; then
-        EGRESS="${EGRESS:+$EGRESS,}$NTFY_HOST"
+    if printf '%s' "$NTFY_HOST" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
+        # IP literal: the domain allowlist is dnsmasq-driven (IPs enter the
+        # ipset only via observed DNS answers), so an IP host must go through
+        # the CIDR path or the push is silently firewalled.
+        echo ",$EGRESS_CIDRS," | grep -qF ",$NTFY_HOST/32," \
+            || EGRESS_CIDRS="${EGRESS_CIDRS:+$EGRESS_CIDRS,}$NTFY_HOST/32"
+    else
+        echo ",$EGRESS," | grep -qF ",$NTFY_HOST," \
+            || EGRESS="${EGRESS:+$EGRESS,}$NTFY_HOST"
     fi
     CONTAINER_NTFY_URL="$NTFY_URL"
     CONTAINER_NTFY_TOPIC="${NTFY_TOPIC:-}"
@@ -291,9 +329,24 @@ fi
 # ── Shared network (all containers; single CIDR for VPN/tunnel targeting) ───
 # One user-defined bridge with a stable subnet (override via DEV_AGENT_SUBNET
 # in ./.env). Existing containers adopt it on their next recreate.
-if ! docker network inspect dev-agent-net >/dev/null 2>&1; then
-    echo "Creating shared network dev-agent-net (${DEV_AGENT_SUBNET:-172.30.0.0/24})"
-    docker network create --subnet "${DEV_AGENT_SUBNET:-172.30.0.0/24}" dev-agent-net >/dev/null
+DESIRED_SUBNET="${DEV_AGENT_SUBNET:-172.30.0.0/24}"
+if docker network inspect dev-agent-net >/dev/null 2>&1; then
+    # The subnet is fixed at creation — warn loudly if the override drifted,
+    # or the operator points their VPN route at a CIDR no container is on.
+    ACTUAL_SUBNET=$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' dev-agent-net 2>/dev/null || true)
+    if [ -n "$ACTUAL_SUBNET" ] && [ "$ACTUAL_SUBNET" != "$DESIRED_SUBNET" ]; then
+        echo "  ⚠ dev-agent-net already exists with subnet $ACTUAL_SUBNET (config wants $DESIRED_SUBNET)."
+        echo "    To change it: stop all dev-agent containers, 'docker network rm dev-agent-net', rerun up.sh."
+    fi
+else
+    echo "Creating shared network dev-agent-net ($DESIRED_SUBNET)"
+    # `|| inspect` tolerates losing a create race to a concurrent up.sh run.
+    if ! docker network create --subnet "$DESIRED_SUBNET" dev-agent-net >/dev/null 2>&1 \
+        && ! docker network inspect dev-agent-net >/dev/null 2>&1; then
+        echo "Error: could not create dev-agent-net ($DESIRED_SUBNET) — the subnet may overlap an existing docker network."
+        echo "Pick a free range via DEV_AGENT_SUBNET in ./.env (docker auto-allocates inside 172.17-172.31)."
+        exit 1
+    fi
 fi
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
@@ -316,6 +369,7 @@ ALLOWED_CIDRS="$EGRESS_CIDRS" \
 KEYS_PATH="$KEYS_PATH" ARTIFACTS_PATH="$ARTIFACTS_PATH" MEM_LIMIT="$MEM_LIMIT" \
 SSH_PORT="$SSH_PORT" SSH_BIND="$SSH_BIND" SSH_AUTHORIZED_KEY="${SSH_AUTHORIZED_KEY:-}" \
 REMOTE_TMUX="$REMOTE_TMUX" \
+MOSH_PORTS="$MOSH_PORTS" MOSH_PORTS_DASH="$MOSH_PORTS_DASH" \
 NTFY_URL="$CONTAINER_NTFY_URL" NTFY_TOPIC="$CONTAINER_NTFY_TOPIC" \
 IMAGE_TAG="$NAME" \
 docker compose -p "dev-agent-$NAME" $COMPOSE_FILES up -d --build
@@ -542,6 +596,6 @@ echo "  Claude:            cd /workspace/main && claude"
 [ -n "$SSH_PORT" ] && echo "  SSH:               ssh -p $SSH_PORT coder@$( [ "$SSH_BIND" = "127.0.0.1" ] && echo localhost || echo '<this-host>' )"
 if [ "$REMOTE_TMUX" = "true" ] || [ "$REMOTE_MOSH" = "true" ]; then
     TUNNEL_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "dev-agent-$NAME" 2>/dev/null || true)"
-    echo "  Remote (tunnel):   ${TUNNEL_IP:-<no ip>} — $( [ "$REMOTE_MOSH" = "true" ] && echo "mosh coder@ip (UDP 60000-60010)" || echo "ssh coder@ip" ) over your WireGuard/VPN"
+    echo "  Remote (tunnel):   ${TUNNEL_IP:-<no ip>} — $( [ "$REMOTE_MOSH" = "true" ] && echo "mosh coder@ip (UDP $MOSH_PORTS_DASH)" || echo "ssh coder@ip" ) over your WireGuard/VPN"
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

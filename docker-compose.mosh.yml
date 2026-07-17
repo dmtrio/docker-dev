@@ -2,12 +2,17 @@
 # remote.mosh: true (requires the ssh: section; always stacked on the ssh
 # overlay). Publishes the mosh UDP range next to sshd — same bind rules:
 # loopback by default, fronted by your WireGuard/VPN tunnel, never public.
-# The in-image mosh-server wrapper pins servers to this same range, and
-# init-firewall.sh accepts inbound UDP on it when MOSH_PORTS is set.
+#
+# The range comes from up.sh (manifest remote.mosh_ports, default
+# 60000:60010) — per manifest because host ports are exclusive: two mosh
+# containers on one host need disjoint ranges, exactly like ssh.port.
+# up.sh is the single source; the env var below also drives the in-image
+# mosh-server wrapper (via /etc/environment) and init-firewall.sh's
+# inbound UDP accept, so publish, server, and firewall cannot disagree.
 
 services:
   dev-agent:
     ports:
-      - "${SSH_BIND:-127.0.0.1}:60000-60010:60000-60010/udp"
+      - "${SSH_BIND:-127.0.0.1}:${MOSH_PORTS_DASH:-60000-60010}:${MOSH_PORTS_DASH:-60000-60010}/udp"
     environment:
-      - MOSH_PORTS=60000:60010
+      - MOSH_PORTS=${MOSH_PORTS:-60000:60010}

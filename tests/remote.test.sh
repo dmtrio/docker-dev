@@ -8,7 +8,9 @@
 
 # SC2015 (`A && pass || fail` is not if-else): intentional — pass() is a
 # bare echo and cannot fail, so the || arm only runs when the check fails.
-# shellcheck disable=SC2015
+# SC2016 (expressions don't expand in single quotes): intentional — the
+# drift greps look for LITERAL ${...} strings in the sources.
+# shellcheck disable=SC2015,SC2016
 
 set -e
 
@@ -45,22 +47,39 @@ for var in NTFY_URL NTFY_TOPIC; do
         || fail "ssh overlay is missing $var"
 done
 
-echo "── mosh port-range agreement (overlay = wrapper = firewall)"
-OVERLAY_RANGE=$(yq -r '.services.dev-agent.environment[]' docker-compose.mosh.yml | sed -n 's/^MOSH_PORTS=//p')
-[ "$OVERLAY_RANGE" = "60000:60010" ] \
-    && pass "mosh overlay sets MOSH_PORTS=60000:60010" \
-    || fail "mosh overlay MOSH_PORTS unexpected: '$OVERLAY_RANGE'"
-grep -qF '60000:60010' src/mosh-server-wrapper.sh \
-    && pass "mosh-server wrapper default matches the overlay range" \
+echo "── mosh port-range agreement (up.sh is the source; defaults must align)"
+# The overlay carries fallbacks (${MOSH_PORTS:-...} / ${MOSH_PORTS_DASH:-...})
+# for the values up.sh computes from remote.mosh_ports. All defaults — env
+# (colon form), publish (dash form), wrapper, up.sh — must be one range.
+ENV_DEFAULT=$(yq -r '.services.dev-agent.environment[]' docker-compose.mosh.yml | sed -n 's/^MOSH_PORTS=${MOSH_PORTS:-\(.*\)}$/\1/p')
+[ "$ENV_DEFAULT" = "60000:60010" ] \
+    && pass "mosh overlay env default is 60000:60010" \
+    || fail "mosh overlay env default unexpected: '$ENV_DEFAULT'"
+DASH_DEFAULT=$(yq -r '.services.dev-agent.ports[0]' docker-compose.mosh.yml | grep -o '{MOSH_PORTS_DASH:-[0-9-]*}' | head -1 | sed 's/.*:-\([0-9-]*\)}/\1/')
+[ "$DASH_DEFAULT" = "${ENV_DEFAULT/:/-}" ] \
+    && pass "publish default ($DASH_DEFAULT) matches env default" \
+    || fail "publish default '$DASH_DEFAULT' != env default '${ENV_DEFAULT/:/-}'"
+grep -qF "\${MOSH_PORTS:-$ENV_DEFAULT}" src/mosh-server-wrapper.sh \
+    && pass "mosh-server wrapper default matches the overlay default" \
     || fail "wrapper default range drifted from the overlay"
-yq -r '.services.dev-agent.ports[]' docker-compose.mosh.yml | grep -qF '60000-60010:60000-60010/udp' \
-    && pass "mosh overlay publishes the same UDP range" \
-    || fail "mosh overlay UDP publish drifted from MOSH_PORTS"
-if printf '%s' "$OVERLAY_RANGE" | grep -qE '^[0-9]+:[0-9]+$'; then
-    pass "overlay range passes the firewall's MOSH_PORTS validation"
-else
-    fail "overlay range would be rejected by init-firewall.sh"
-fi
+grep -qF "MOSH_PORTS:-60000:60010" up.sh \
+    && pass "up.sh default range matches" \
+    || fail "up.sh default range drifted"
+
+# up.sh's remote.mosh_ports validation must reject malformed/reversed ranges
+check_range() { printf '%s' "$1" | grep -qE '^[0-9]{1,5}:[0-9]{1,5}$'; }
+check_range "60000:60010" && pass "range validation accepts 60000:60010" || fail "validation rejects the default range"
+check_range "60000-60010" && fail "range validation accepted dash form" || pass "range validation rejects dash form"
+check_range "abc:123"     && fail "range validation accepted junk" || pass "range validation rejects junk"
+
+# wrapper: the -p pin must be spliced BEFORE any '--' (a trailing pin lands
+# in the remote command's argv and is silently ignored by getopt)
+grep -qF 'exec /usr/bin/mosh-server new "${ARGS[@]}"' src/mosh-server-wrapper.sh \
+    && pass "wrapper rebuilds argv around 'new'" \
+    || fail "wrapper argv splice missing"
+awk '/for a in "\$@"/,/^fi$/' src/mosh-server-wrapper.sh | grep -qF '"--"' \
+    && pass "wrapper splices the pin before '--'" \
+    || fail "wrapper no longer handles the '--' separator"
 
 echo "── manifest plumbing simulation (same expressions as up.sh)"
 M=$(mktemp); trap 'rm -f "$M"' EXIT
@@ -73,22 +92,38 @@ printf 'remote:\n  tmux: true\n' > "$M"
     && pass "remote-without-ssh is detectable (ssh.port empty)" \
     || fail "ssh.port unexpectedly present"
 
-# ntfy host extraction (same sed as up.sh)
-extract_host() { printf '%s' "$1" | sed -E 's|^[A-Za-z]+://||; s|/.*$||; s|:.*$||'; }
+# ntfy host extraction (same sed as up.sh; drift-guarded below)
+extract_host() { printf '%s' "$1" | sed -E 's|^[A-Za-z]+://||; s|/.*$||; s|^.*@||; s|:[0-9]+$||'; }
 [ "$(extract_host 'https://ntfy.example.com')" = "ntfy.example.com" ] \
     && pass "ntfy host parsed from bare https URL" \
     || fail "host extraction broke on bare URL"
 [ "$(extract_host 'http://ntfy.lan:8080/topic')" = "ntfy.lan" ] \
     && pass "ntfy host parsed from URL with port + path" \
     || fail "host extraction broke on port/path URL"
+[ "$(extract_host 'https://user:pass@ntfy.example.com')" = "ntfy.example.com" ] \
+    && pass "userinfo is stripped (not mistaken for the host)" \
+    || fail "host extraction broke on userinfo URL: got '$(extract_host 'https://user:pass@ntfy.example.com')'"
+[ "$(extract_host 'http://192.168.1.50:8080')" = "192.168.1.50" ] \
+    && pass "IP-literal host parses intact" \
+    || fail "host extraction broke on IP-literal URL"
+# IP literals must take the CIDR path (DNS-driven zones never see them)
+printf '%s' "192.168.1.50" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' \
+    && pass "IP-literal detection matches (routes to egress_cidrs)" \
+    || fail "IP-literal detection regex broken"
+printf '%s' "ntfy.example.com" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' \
+    && fail "hostname misdetected as IP literal" \
+    || pass "hostnames stay on the zone path"
 
 echo "── landing + notify wiring"
 grep -qF 'tmux new-session -A -s agent' src/tmux-landing.bashrc \
     && pass "landing snippet attaches the shared 'agent' session" \
     || fail "landing snippet lost the new-session -A attach"
-grep -qE 'sshd\|mosh-server' src/tmux-landing.bashrc \
-    && pass "landing snippet gates on sshd/mosh-server parents" \
-    || fail "landing snippet lost the parent-process gate"
+grep -qE 'sshd\|sshd-session\|mosh-server' src/tmux-landing.bashrc \
+    && pass "landing gates on sshd/sshd-session/mosh-server parents (OpenSSH >=9.8 split)" \
+    || fail "landing snippet lost the parent-process gate (must include sshd-session)"
+grep -qF '/proc/$PPID/comm' src/tmux-landing.bashrc \
+    && pass "parent check reads /proc directly (no procps dependency)" \
+    || fail "parent check no longer reads /proc/\$PPID/comm"
 grep -qF 'tmux-landing.bashrc' Dockerfile \
     && pass "Dockerfile installs + sources the landing snippet" \
     || fail "Dockerfile no longer wires tmux-landing.bashrc"
@@ -101,6 +136,15 @@ grep -qF 'src/tmux-notify.sh /usr/local/bin/tmux-notify.sh' Dockerfile \
 grep -qF 'monitor-silence' src/tmux.conf \
     && pass "tmux.conf arms monitor-silence behind NTFY_URL" \
     || fail "tmux.conf lost the silence monitor"
+grep -qF 'silence-action any' src/tmux.conf \
+    && pass "silence-action any set (default 'other' never fires for a single-window session)" \
+    || fail "tmux.conf lost silence-action any — the notifier would never fire"
+grep -qF '#{hook_window}' src/tmux.conf \
+    && pass "hook passes the alerting window to the notifier" \
+    || fail "tmux.conf hook no longer passes #{hook_window}"
+grep -qF 'TARGET="${1:-agent}"' src/tmux-notify.sh \
+    && pass "notifier captures the window the hook passed" \
+    || fail "notifier lost the hook-window target argument"
 grep -qF 'list-clients' src/tmux-notify.sh \
     && pass "notifier suppresses while a client is attached" \
     || fail "notifier lost attached-client suppression"
@@ -115,12 +159,17 @@ done <<'DRIFT'
 up.sh	.remote.tmux // false
 up.sh	.remote.mosh // false
 up.sh	.remote.notify
+up.sh	.remote.mosh_ports
 up.sh	docker-compose.mosh.yml
 up.sh	dev-agent-net
-up.sh	s|^[A-Za-z]+://||; s|/.*$||; s|:.*$||
+up.sh	remote.notify requires remote.tmux
+up.sh	s|^[A-Za-z]+://||; s|/.*$||; s|^.*@||; s|:[0-9]+$||
+up.sh	^[0-9]{1,5}:[0-9]{1,5}$
 src/init-firewall.sh	^[0-9]+:[0-9]+$
 src/init-firewall.sh	--dport "$MOSH_PORTS"
+src/init-firewall.sh	-s "$HOST_IP"
 src/entrypoint.sh	REMOTE_TMUX MOSH_PORTS NTFY_URL NTFY_TOPIC CONTAINER_NAME
+Dockerfile	update-locale LANG=en_US.UTF-8
 DRIFT
 
 echo ""

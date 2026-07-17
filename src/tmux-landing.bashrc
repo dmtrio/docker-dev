@@ -9,12 +9,15 @@
 #   $TMUX          — shells inside tmux must not recurse
 #   $- has i       — non-interactive channels (scp, VS Code Remote-SSH's
 #                    command channel) stay untouched
-#   parent process — only sshd (ssh logins) and mosh-server (mosh logins);
-#                    docker exec (PPID outside the pid namespace) and
-#                    editor-spawned terminals (parent: node) are exempt,
-#                    so attach-mode workflows are unchanged.
+#   parent process — only sshd (ssh logins; 'sshd-session' since OpenSSH
+#                    9.8 split the per-session binary) and mosh-server
+#                    (mosh logins); docker exec (PPID outside the pid
+#                    namespace) and editor-spawned terminals (parent: node)
+#                    are exempt, so attach-mode workflows are unchanged.
+#                    /proc/<pid>/comm is what `ps -o comm=` reads — used
+#                    directly so the check needs no extra package.
 if [ "${REMOTE_TMUX:-false}" = "true" ] && [ -z "${TMUX:-}" ] && [[ $- == *i* ]]; then
-    case "$(ps -o comm= -p $PPID 2>/dev/null)" in
-        sshd|mosh-server) exec tmux new-session -A -s agent ;;
+    case "$(cat "/proc/$PPID/comm" 2>/dev/null)" in
+        sshd|sshd-session|mosh-server) exec tmux new-session -A -s agent ;;
     esac
 fi

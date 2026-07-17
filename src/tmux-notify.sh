@@ -8,6 +8,11 @@
 # Suppression: if any client is attached you are already looking at the
 # session — pushing would self-notify on every pause. Only push when nobody
 # is watching.
+#
+# $1: the window that went silent (tmux.conf passes #{hook_window}) — the
+# alert-silence hook is server-global, so without it we'd capture whatever
+# session 'agent' happens to front, not the pane that idled. Falls back to
+# the landing session's name for manual/legacy invocations.
 
 [ -n "${NTFY_URL:-}" ] || exit 0
 
@@ -15,8 +20,10 @@ if [ "$(tmux list-clients 2>/dev/null | wc -l)" -gt 0 ]; then
     exit 0
 fi
 
+TARGET="${1:-agent}"
+
 # Last non-blank pane lines give the push its context (the prompt/question).
-TAIL=$(tmux capture-pane -p -t agent 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 3)
+TAIL=$(tmux capture-pane -p -t "$TARGET" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 3)
 
 curl -s --max-time 10 \
     -H "Title: dev-agent-${CONTAINER_NAME:-container}: agent idle" \

@@ -171,11 +171,15 @@ fi
 HOST_NETWORK=$(echo "$HOST_IP" | sed "s/\.[0-9]*$/.0\/24/")
 echo "Host network detected as: $HOST_NETWORK"
 
-# INBOUND from the host network stays open (published ports arrive via the
-# gateway proxy). OUTBOUND to the host network is deliberately NOT opened
-# wholesale — on plain Linux the gateway IS the host, and a blanket rule
-# would defeat the HOST_MCP_PORTS opt-in below.
-iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
+# INBOUND from the GATEWAY IP stays open (published-port traffic arrives via
+# the gateway proxy, whose source is the gateway address). Deliberately NOT
+# the whole subnet: on the shared dev-agent-net bridge the /24 is the entire
+# fleet, and a subnet-wide ACCEPT would let any sibling container reach this
+# one's listeners — cross-container isolation must not rest on the sibling's
+# own (agent-editable) OUTPUT chain. OUTBOUND to the host network is likewise
+# NOT opened wholesale — a blanket rule would defeat the HOST_MCP_PORTS
+# opt-in below.
+iptables -A INPUT -s "$HOST_IP" -j ACCEPT
 
 # Set default policies to DROP first
 iptables -P INPUT DROP

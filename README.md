@@ -228,9 +228,11 @@ remote:  { tmux: true, mosh: true, notify: ntfy }
 - **tmux** — interactive SSH/mosh logins land attached to one durable
   session (`agent`). Phone and laptop share the same view; agents survive
   disconnects. `docker exec` and editor terminals are exempt.
-- **mosh** — UDP 60000–60010, published next to sshd with the same bind
-  rules and pinned server-side. Survives phone sleep and WiFi↔cellular
-  switches; use a mosh-capable client (e.g. Moshi or Blink on iOS).
+- **mosh** — a per-manifest UDP range (`remote.mosh_ports`, default
+  60000:60010; disjoint per container, like `ssh.port`), published next to
+  sshd with the same bind rules and pinned server-side. Survives phone
+  sleep and WiFi↔cellular switches; use a mosh-capable client (e.g. Moshi
+  or Blink on iOS).
 - **notify: ntfy** — an agent-blind monitor pushes to your ntfy topic when
   the session goes idle at a prompt and nobody is attached. Set `NTFY_URL`
   (+ optional `NTFY_TOPIC`) in `secrets.env`; the host is auto-allowlisted.

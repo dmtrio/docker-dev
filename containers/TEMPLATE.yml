@@ -36,9 +36,16 @@ memory: 10g
 # Everything is reached over your WireGuard/VPN tunnel — nothing public.
 # notify: ntfy needs NTFY_URL (and optional NTFY_TOPIC) in secrets.env;
 # the ntfy host is auto-added to this container's egress allowlist.
+# mosh_ports (optional, START:END, default 60000:60010): host UDP ports are
+# exclusive, so give each mosh container on one host its own range — same
+# reason each has its own ssh.port. notify requires tmux (the idle monitor
+# lives inside the tmux session). A self-hosted ntfy on a plain LAN
+# hostname needs the IP in capabilities.egress_cidrs instead (the domain
+# allowlist is DNS-driven); an IP-literal NTFY_URL is handled automatically.
 #remote:
 #  tmux: true
 #  mosh: true
+#  mosh_ports: 60000:60010
 #  notify: ntfy
 
 # Agent CLIs baked into the image. Omit this key entirely = all of them.

@@ -217,11 +217,15 @@ ENV SSH_ENABLED=false
 # phone and laptop attach to the same view; agents survive disconnects). mosh
 # rides UDP for flaky mobile networks — reached only over the operator's
 # WireGuard/VPN tunnel, never a public listener. mosh requires a UTF-8
-# locale; procps provides the `ps` the tmux-landing shell check uses.
+# locale — update-locale writes /etc/default/locale, which PAM reads for
+# SSH sessions (the ENV below only covers entrypoint/docker-exec processes;
+# sshd builds its env from PAM and would otherwise run C/POSIX and make
+# mosh-server abort with 'needs a UTF-8 native locale').
 RUN apt-get update && apt-get install -y \
-    tmux mosh locales procps \
+    tmux mosh locales \
     && rm -rf /var/lib/apt/lists/* \
-    && locale-gen en_US.UTF-8
+    && locale-gen en_US.UTF-8 \
+    && update-locale LANG=en_US.UTF-8
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
 COPY --chown=$USERNAME:$USERNAME src/tmux.conf /home/$USERNAME/.tmux.conf
@@ -243,7 +247,7 @@ RUN chmod +x /usr/local/bin/tmux-notify.sh
 COPY src/tmux-landing.bashrc /usr/local/share/tmux-landing.bashrc
 RUN echo '' >> /home/$USERNAME/.bashrc \
     && echo '# RFC 04: SSH/mosh logins land in a shared tmux session (keep last)' >> /home/$USERNAME/.bashrc \
-    && echo '[ -f /usr/local/share/tmux-landing.bashrc ] && . /usr/local/share/tmux-landing.bashrc' >> /home/$USERNAME/.bashrc
+    && echo '. /usr/local/share/tmux-landing.bashrc' >> /home/$USERNAME/.bashrc
 
 # VS Code / Cursor "Attach to Running Container" reads this: attach as
 # coder (not root) and open /workspace by default.
