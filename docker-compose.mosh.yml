@@ -1,0 +1,13 @@
+# docker-compose.mosh.yml — overlay added by up.sh when the manifest has
+# remote.mosh: true (requires the ssh: section; always stacked on the ssh
+# overlay). Publishes the mosh UDP range next to sshd — same bind rules:
+# loopback by default, fronted by your WireGuard/VPN tunnel, never public.
+# The in-image mosh-server wrapper pins servers to this same range, and
+# init-firewall.sh accepts inbound UDP on it when MOSH_PORTS is set.
+
+services:
+  dev-agent:
+    ports:
+      - "${SSH_BIND:-127.0.0.1}:60000-60010:60000-60010/udp"
+    environment:
+      - MOSH_PORTS=60000:60010

@@ -102,6 +102,23 @@ SSH_BIND=$(Y '.ssh.bind'); SSH_BIND="${SSH_BIND:-127.0.0.1}"
 COMPOSE_FILES="-f $SCRIPT_DIR/docker-compose.local.yml"
 [ -n "$SSH_PORT" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.ssh.yml"
 # (the missing-key case is a hard failure just before compose up, below)
+
+# Optional remote: section (RFC 04) — extends ssh: with a durable tmux
+# session, mosh (UDP, mobile-resilient), and idle notifications. All of it
+# rides the SSH login path, so remote.* without ssh.port is a manifest error.
+REMOTE_TMUX=$(yq '.remote.tmux // false' "$MANIFEST")
+REMOTE_MOSH=$(yq '.remote.mosh // false' "$MANIFEST")
+REMOTE_NOTIFY=$(Y '.remote.notify')
+if [ "$REMOTE_TMUX" = "true" ] || [ "$REMOTE_MOSH" = "true" ] || [ -n "$REMOTE_NOTIFY" ]; then
+    [ -n "$SSH_PORT" ] || { echo "Error: manifest has remote: but no ssh: section — remote access rides the SSH login path (add ssh.port)"; exit 1; }
+fi
+case "$REMOTE_NOTIFY" in
+    ""|ntfy) ;;
+    *) echo "Error: remote.notify must be 'ntfy' (got '$REMOTE_NOTIFY')"; exit 1 ;;
+esac
+# mosh gets its own overlay: the UDP range publish must not exist for
+# containers that didn't opt in (compose can't publish conditionally).
+[ "$REMOTE_MOSH" = "true" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.mosh.yml"
 OBS_REFS=$(yq -r '(.identities.obsidian // []) | join(" ")' "$MANIFEST")
 WATCH_REFS=$(yq -r '(.identities.watch // []) | join(" ")' "$MANIFEST")
 
@@ -258,7 +275,11 @@ fi
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
 echo "Applying containers/$NAME.yml → dev-agent-$NAME"
-echo "  ports='${HOST_MCP_PORTS:-none}' egress='${EGRESS:-none}' plugins='${PLUGINS:-none}' mem=$MEM_LIMIT"
+REMOTE_SUMMARY=""
+[ "$REMOTE_TMUX" = "true" ] && REMOTE_SUMMARY="tmux"
+[ "$REMOTE_MOSH" = "true" ] && REMOTE_SUMMARY="${REMOTE_SUMMARY:+$REMOTE_SUMMARY+}mosh"
+[ -n "$REMOTE_NOTIFY" ]     && REMOTE_SUMMARY="${REMOTE_SUMMARY:+$REMOTE_SUMMARY+}$REMOTE_NOTIFY"
+echo "  ports='${HOST_MCP_PORTS:-none}' egress='${EGRESS:-none}' plugins='${PLUGINS:-none}' remote='${REMOTE_SUMMARY:-none}' mem=$MEM_LIMIT"
 
 CONTAINER_NAME="$NAME" \
 USER_UID="$USER_UID" USER_GID="$USER_GID" \
@@ -271,6 +292,7 @@ HOST_MCP_PORTS="$HOST_MCP_PORTS" EXTRA_ALLOWED_DOMAINS="$EGRESS" \
 ALLOWED_CIDRS="$EGRESS_CIDRS" \
 KEYS_PATH="$KEYS_PATH" ARTIFACTS_PATH="$ARTIFACTS_PATH" MEM_LIMIT="$MEM_LIMIT" \
 SSH_PORT="$SSH_PORT" SSH_BIND="$SSH_BIND" SSH_AUTHORIZED_KEY="${SSH_AUTHORIZED_KEY:-}" \
+REMOTE_TMUX="$REMOTE_TMUX" \
 IMAGE_TAG="$NAME" \
 docker compose -p "dev-agent-$NAME" $COMPOSE_FILES up -d --build
 
