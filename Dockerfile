@@ -232,6 +232,11 @@ COPY --chown=$USERNAME:$USERNAME src/tmux.conf /home/$USERNAME/.tmux.conf
 COPY src/mosh-server-wrapper.sh /usr/local/bin/mosh-server
 RUN chmod +x /usr/local/bin/mosh-server
 
+# Agent-blind idle notifier: tmux.conf's silence hook runs it when NTFY_URL
+# is present in the environment (remote.notify: ntfy).
+COPY src/tmux-notify.sh /usr/local/bin/tmux-notify.sh
+RUN chmod +x /usr/local/bin/tmux-notify.sh
+
 # Land interactive SSH/mosh logins in the shared tmux session. The logic
 # lives in a sourced file (lintable, readable); the hook must be the LAST
 # line of .bashrc so fnm/shim PATH setup has already run when tmux execs.
