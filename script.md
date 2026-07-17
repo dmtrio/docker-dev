@@ -109,3 +109,11 @@ themselves inside the container; listed for completeness.
   (GitHub IP ranges + dnsmasq-mirrored zones), verifies itself, and exits non-zero
   on failure so the container never runs with open egress. `allow-egress.sh` edits
   the same zone list live; the base `ALLOWED_ZONES` here is the durable default.
+- **`src/tmux.conf` / `src/tmux-landing.bashrc`** — remote access (RFC 04):
+  mobile-friendly tmux defaults, and the guarded snippet that lands interactive
+  SSH/mosh logins in the shared durable `agent` session.
+- **`src/mosh-server-wrapper.sh`** — pins client-launched mosh servers to the
+  firewalled/published UDP range.
+- **`src/tmux-notify.sh`** — agent-blind idle notifier; fired by the tmux
+  silence hook when `remote.notify: ntfy` is on, pushes to your ntfy topic
+  unless a client is attached.
