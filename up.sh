@@ -208,6 +208,21 @@ for p in $PLUGINS; do
 done
 set +f
 
+# remote.notify: ntfy implies the ntfy host in the egress allowlist (RFC 04).
+# Hard-fail on a missing URL: an explicitly requested notifier that silently
+# does nothing is worse than a refused apply. -F: host is a literal, not a regex.
+CONTAINER_NTFY_URL=""; CONTAINER_NTFY_TOPIC=""
+if [ "$REMOTE_NOTIFY" = "ntfy" ]; then
+    [ -n "${NTFY_URL:-}" ] || { echo "Error: manifest has remote.notify: ntfy but NTFY_URL is missing from $SECRETS_FILE"; exit 1; }
+    NTFY_HOST=$(printf '%s' "$NTFY_URL" | sed -E 's|^[A-Za-z]+://||; s|/.*$||; s|:.*$||')
+    [ -n "$NTFY_HOST" ] || { echo "Error: cannot parse a host from NTFY_URL '$NTFY_URL'"; exit 1; }
+    if ! echo ",$EGRESS," | grep -qF ",$NTFY_HOST,"; then
+        EGRESS="${EGRESS:+$EGRESS,}$NTFY_HOST"
+    fi
+    CONTAINER_NTFY_URL="$NTFY_URL"
+    CONTAINER_NTFY_TOPIC="${NTFY_TOPIC:-}"
+fi
+
 # ── Compose derived credentials (keys/<name>/ is rebuilt from scratch) ───────
 KEYS_PATH="$BASE_PATH/keys/$NAME"
 mkdir -p "$KEYS_PATH"; chmod 700 "$KEYS_PATH"
@@ -301,6 +316,7 @@ ALLOWED_CIDRS="$EGRESS_CIDRS" \
 KEYS_PATH="$KEYS_PATH" ARTIFACTS_PATH="$ARTIFACTS_PATH" MEM_LIMIT="$MEM_LIMIT" \
 SSH_PORT="$SSH_PORT" SSH_BIND="$SSH_BIND" SSH_AUTHORIZED_KEY="${SSH_AUTHORIZED_KEY:-}" \
 REMOTE_TMUX="$REMOTE_TMUX" \
+NTFY_URL="$CONTAINER_NTFY_URL" NTFY_TOPIC="$CONTAINER_NTFY_TOPIC" \
 IMAGE_TAG="$NAME" \
 docker compose -p "dev-agent-$NAME" $COMPOSE_FILES up -d --build
 

@@ -15,3 +15,8 @@ services:
       # session (the entrypoint persists this into /etc/environment so
       # PAM-built SSH session envs see it).
       - REMOTE_TMUX=${REMOTE_TMUX:-false}
+      # RFC 04 notify: set only when the manifest has remote.notify: ntfy
+      # (up.sh passes them through; empty otherwise). The tmux silence hook
+      # arms itself off NTFY_URL's presence.
+      - NTFY_URL=${NTFY_URL:-}
+      - NTFY_TOPIC=${NTFY_TOPIC:-}
