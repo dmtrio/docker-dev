@@ -15,10 +15,16 @@ install: |
   uv tool install -p 3.13 serena-agent
 
 # Merged into /workspace/main/.mcp.json. stdio server: command + args, no type.
+# --project must follow the SESSION, not hardcode /workspace/main: feature work
+# happens in /workspace/worktrees/<branch> (each symlinks main's .mcp.json per
+# the workspace contract), and a hardcoded path would make serena read AND
+# EDIT the wrong checkout from every worktree. Claude launches stdio MCP
+# servers with cwd = the directory it was started in, so "$PWD" roots serena
+# at main when started in main and at the worktree when started there.
 mcp:
   serena:
-    command: serena
-    args: [start-mcp-server, --context, ide-assistant, --project, /workspace/main]
+    command: bash
+    args: [-c, 'exec serena start-mcp-server --context ide-assistant --project "$PWD"']
 
 # Serena downloads a language server per language on first use (lazy). github.com
 # + npmjs.org + pythonhosted.org are already in the base allowlist, covering the
