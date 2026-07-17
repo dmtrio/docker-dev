@@ -1,0 +1,30 @@
+# plugins/serena.yml — a baked-in local MCP tool (stdio, runs INSIDE the
+# container). Enable it per container by listing its name in the manifest:
+#
+#   plugins: [serena]
+#
+# up.sh then merges `mcp` into that container's .mcp.json (Claude) and adds
+# `egress` to its firewall allowlist. `install` runs once at IMAGE BUILD (all
+# plugin files are baked so the tool is present offline; only listed plugins
+# are wired into a given container). No host service, no secret — unlike the
+# capabilities:{gateway,proxyman,browser}, which are host-side HTTP services.
+#
+# Serena: semantic code retrieval + editing over LSP (github.com/oraios/serena).
+
+install: |
+  uv tool install -p 3.13 serena-agent
+
+# Merged into /workspace/main/.mcp.json. stdio server: command + args, no type.
+mcp:
+  serena:
+    command: serena
+    args: [start-mcp-server, --context, ide-assistant, --project, /workspace/main]
+
+# Serena downloads a language server per language on first use (lazy). github.com
+# + npmjs.org + pythonhosted.org are already in the base allowlist, covering the
+# common Python/TS/JS servers; the hosts below cover the Azure-blob-hosted ones
+# (.NET, some others). If a language's server still fails to download, read the
+# firewall's blocked host from the error and add it live with:
+#   ./allow-egress.sh dev-agent-<name> <host> --save yml
+egress:
+  - blob.core.windows.net

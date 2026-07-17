@@ -93,6 +93,42 @@ A container without a grant cannot reach the host or the zone — enforced by
 the in-container firewall (dnsmasq resolver-driven ipset; rotating CDN DNS
 can't outrun it).
 
+## Plugins (drop-in local MCP tools)
+
+Where capabilities are host-side services (port + secret) and remote MCP
+servers need a per-agent key, a **plugin** is the simplest kind of tool: a
+local stdio MCP server that runs entirely inside the container. One file —
+`plugins/<name>.yml` — describes everything about it:
+
+```yaml
+install: |                     # runs at IMAGE BUILD (full network; offline after)
+  uv tool install -p 3.13 serena-agent
+mcp:                           # merged into the generated .mcp.json (Claude)
+  serena:
+    command: serena
+    args: [start-mcp-server, --context, ide-assistant, --project, /workspace/main]
+egress:                        # added to this container's firewall allowlist
+  - blob.core.windows.net
+```
+
+Two independent axes, deliberately split:
+
+- **Baked (build, image-wide):** every plugin file's `install:` runs at image
+  build, so all plugin binaries live in the shared image and work offline
+  behind the runtime firewall. Adding a plugin = dropping a file + a rebuild —
+  no `Dockerfile` or `up.sh` edits.
+- **Wired (up, per container):** a manifest opts in with `plugins: [serena]`;
+  `up.sh` merges that plugin's `mcp` into the container's `.mcp.json`
+  (pre-approved, like the other generated servers) and its `egress` into the
+  firewall. Containers that don't list it carry the dormant binary and
+  nothing else.
+
+First plugin: **serena** (`github.com/oraios/serena`) — semantic code
+retrieval + editing over LSP. It lazily downloads a language server per
+language on first use; github/npm/pythonhosted are already allowlisted
+(Python/TS/JS) and the plugin adds the Azure-blob hosts. If some other
+language's download is blocked, add the host live with `allow-egress.sh`.
+
 ## Identity model
 
 - **Per agent, not per container**: shims front each CLI and load
@@ -132,7 +168,11 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
 - `up.sh` / `down.sh` — container lifecycle from manifests
 - `common.sh` — shared path resolution (sourced by the scripts; not run directly)
 - `containers/` — manifests (`TEMPLATE.yml` to copy; your own are gitignored)
+- `plugins/` — drop-in local MCP tools (one `<name>.yml` each: install / mcp /
+  egress), baked at image build, wired per container via the manifest's
+  `plugins:` list
 - `rules/` — bundled default agent rules & skills (override via `RULES_PATH`)
+- `tests/` — host-runnable checks (`plugins.test.sh` — needs only yq + jq)
 - `Dockerfile`, `docker-compose.local.yml`, `workspace.CLAUDE.md`,
   `src/` (`entrypoint.sh`, `init-firewall.sh`) — the image and its contracts
 - `run-*.sh` — host-side capability services

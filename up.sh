@@ -67,6 +67,29 @@ CAP_BROWSER=$(yq '.capabilities.browser // false' "$MANIFEST")
 EGRESS=$(yq -r '(.capabilities.egress // []) | join(",")' "$MANIFEST")
 EGRESS_CIDRS=$(yq -r '(.capabilities.egress_cidrs // []) | join(",")' "$MANIFEST")
 
+# Plugins: baked-in local stdio MCP tools, one plugins/<name>.yml each (see
+# that dir). Binaries are baked into the image at build; listing a name here
+# only WIRES it for this container (mcp entry + egress). Validate every name
+# before touching anything: names become file paths, so restrict the charset,
+# and a listed plugin without a file is a manifest typo — hard-fail.
+PLUGINS=$(yq -r '(.plugins // []) | join(" ")' "$MANIFEST")
+PLUGIN_ERRORS=""
+for p in $PLUGINS; do
+    if ! printf '%s' "$p" | grep -qE '^[A-Za-z0-9_-]+$'; then
+        PLUGIN_ERRORS="$PLUGIN_ERRORS
+  plugin '$p': illegal characters (allowed: letters, digits, underscore, dash)"
+        continue
+    fi
+    if [ ! -f "$SCRIPT_DIR/plugins/$p.yml" ]; then
+        PLUGIN_ERRORS="$PLUGIN_ERRORS
+  plugin '$p': no plugin file at plugins/$p.yml"
+    fi
+done
+if [ -n "$PLUGIN_ERRORS" ]; then
+    echo "Error: manifest plugins failed validation:$PLUGIN_ERRORS"
+    exit 1
+fi
+
 # Optional ssh: section — same image/manifest everywhere; SSH is just a
 # deploy capability (homelab/VPS editor access via Remote-SSH).
 SSH_PORT=$(Y '.ssh.port')
@@ -132,6 +155,19 @@ HOST_MCP_PORTS="${HOST_MCP_PORTS#,}"
 if [ -n "$OBS_REFS" ] && ! echo ",$EGRESS," | grep -q ",mcp-obsidian.dmetr.io,"; then
     EGRESS="${EGRESS:+$EGRESS,}mcp-obsidian.dmetr.io"
 fi
+
+# Fold each enabled plugin's egress into the firewall list, and collect its
+# mcp block as one-line JSON (host side only extracts — the additive merge
+# into .mcp.json runs in-container with jq, keeping the host dependency at
+# just yq). Entries accumulate newline-separated for a later `jq -s add`.
+PLUGIN_MCP_ENTRIES=""
+for p in $PLUGINS; do
+    for d in $(yq -r '(.egress // []) | join(" ")' "$SCRIPT_DIR/plugins/$p.yml"); do
+        echo ",$EGRESS," | grep -q ",$d," || EGRESS="${EGRESS:+$EGRESS,}$d"
+    done
+    PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES$(yq -o=json -I=0 '.mcp // {}' "$SCRIPT_DIR/plugins/$p.yml")
+"
+done
 
 # ── Compose derived credentials (keys/<name>/ is rebuilt from scratch) ───────
 KEYS_PATH="$BASE_PATH/keys/$NAME"
@@ -200,7 +236,7 @@ fi
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
 echo "Applying containers/$NAME.yml → dev-agent-$NAME"
-echo "  ports='${HOST_MCP_PORTS:-none}' egress='${EGRESS:-none}' mem=$MEM_LIMIT"
+echo "  ports='${HOST_MCP_PORTS:-none}' egress='${EGRESS:-none}' plugins='${PLUGINS:-none}' mem=$MEM_LIMIT"
 
 CONTAINER_NAME="$NAME" \
 USER_UID="$USER_UID" USER_GID="$USER_GID" \
@@ -324,6 +360,7 @@ for ref in $OBS_REFS; do [ "$(agent_for_ref "$ref")" = "claude" ] && HAS_OBSIDIA
 docker exec -u coder \
     -e WANT_GATEWAY="$CAP_GATEWAY" -e WANT_PROXYMAN="$CAP_PROXYMAN" \
     -e WANT_BROWSER="$CAP_BROWSER" -e WANT_OBSIDIAN="$HAS_OBSIDIAN" \
+    -e PLUGIN_MCP="$PLUGIN_MCP_ENTRIES" \
     "dev-agent-$NAME" bash -c '
 set -e
 # Gate on the repo (.git), not just the dir: the entrypoint always creates an
@@ -350,6 +387,13 @@ if [ "$WANT_BROWSER" = "true" ]; then
 fi
 if [ "$WANT_OBSIDIAN" = "true" ]; then
   J=$(echo "$J" | jq ".mcpServers.\"obsidian-annotated\" = {type:\"http\",url:\"https://mcp-obsidian.dmetr.io/mcp\",headers:{Authorization:\"Bearer \${OBSIDIAN_ANNOTATED_KEY}\"}}")
+fi
+# Plugins: PLUGIN_MCP is newline-separated one-line JSON objects (one per
+# enabled plugin, extracted host-side with yq). Slurp-add merges them into a
+# single object, then fold that into mcpServers additively.
+if [ -n "$PLUGIN_MCP" ]; then
+  PLUGINS_OBJ=$(printf "%s" "$PLUGIN_MCP" | jq -s "add // {}")
+  J=$(echo "$J" | jq --argjson p "$PLUGINS_OBJ" ".mcpServers += \$p")
 fi
 echo "$J" | jq . > /workspace/main/.mcp.json
 touch /workspace/.mcp.generated

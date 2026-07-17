@@ -46,6 +46,12 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 RUN curl -fsSL "https://dl.gitea.com/tea/0.9.2/tea-0.9.2-linux-$(dpkg --print-architecture)" -o /usr/local/bin/tea \
     && chmod +x /usr/local/bin/tea
 
+# ── yq (pinned) — parses plugins/*.yml at build; handy in-container too ─────
+ARG YQ_VERSION=v4.44.3
+RUN curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_$(dpkg --print-architecture)" \
+        -o /usr/local/bin/yq \
+    && chmod +x /usr/local/bin/yq
+
 # ── Create non-root user ──────────────────────────────────────────────────────
 RUN userdel -r ubuntu 2>/dev/null || true \
     && groupadd --gid $USER_GID $USERNAME 2>/dev/null || true \
@@ -114,6 +120,25 @@ RUN if [ "$INSTALL_AIDER" = "true" ]; then \
 RUN if [ "$INSTALL_CODEX" = "true" ]; then \
         eval "$(fnm env)" && npm install -g @openai/codex; \
     fi
+
+# ── Plugins (drop-in local MCP tools) ────────────────────────────────────────
+# Every plugins/<name>.yml is baked into the shared image here — its
+# `install:` block runs at build time (full network) so the binary is present
+# offline behind the runtime egress firewall. Which containers actually USE a
+# plugin is a separate, per-container decision: up.sh wires mcp + egress only
+# for the names in that manifest's `plugins:` list. Adding a tool = adding one
+# file; this loop never changes. Runs as $USERNAME after the toolchain (uv,
+# node) so installers land in ~/.local like everything else. Fail-fast: set -e
+# aborts the build on a failed extract or install.
+COPY --chown=$USERNAME:$USERNAME plugins /opt/plugins
+RUN set -e; \
+    for f in /opt/plugins/*.yml; do \
+        [ -e "$f" ] || continue; \
+        echo "── plugin install: $(basename "$f" .yml)"; \
+        yq -r '.install // ""' "$f" > /tmp/plugin-install.sh; \
+        bash -e /tmp/plugin-install.sh; \
+    done; \
+    rm -f /tmp/plugin-install.sh
 
 # ── Agent-identity shims ──────────────────────────────────────────────────────
 # Each agent CLI is fronted by a shim that loads per-agent MCP credentials
