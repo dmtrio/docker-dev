@@ -254,8 +254,7 @@ if [ "$REMOTE_NOTIFY" = "ntfy" ]; then
         echo ",$EGRESS_CIDRS," | grep -qF ",$NTFY_HOST/32," \
             || EGRESS_CIDRS="${EGRESS_CIDRS:+$EGRESS_CIDRS,}$NTFY_HOST/32"
     else
-        echo ",$EGRESS," | grep -qF ",$NTFY_HOST," \
-            || EGRESS="${EGRESS:+$EGRESS,}$NTFY_HOST"
+        add_egress_domain "$NTFY_HOST"
     fi
     CONTAINER_NTFY_URL="$NTFY_URL"
     CONTAINER_NTFY_TOPIC="${NTFY_TOPIC:-}"
