@@ -1,12 +1,14 @@
 #!/bin/bash
 # tests/plugins.test.sh — host-runnable checks for the plugin mechanism.
 # Needs only yq + jq (no docker): validates every plugins/*.yml against the
-# schema up.sh and the Dockerfile expect, exercises the same extraction +
-# merge logic up.sh uses, and pins the copied expressions to up.sh's actual
+# schema up.sh and the Dockerfile expect, exercises the host-side (yq)
+# extraction up.sh runs, and pins the copied expressions to up.sh's actual
 # text (drift guard) so an up.sh edit can't leave this suite green while the
-# real wiring changes. The docker build/up path itself is covered by the
-# manual build-test against a throwaway manifest (see PLN/LOG - Baked-in
-# Plugins).
+# real wiring changes. The in-container wiring (JSON merges, codex TOML) is
+# real Python — src/wire_plugins.py — unit-tested by
+# tests/test_wire_plugins.py and run from here when python3 is available.
+# The docker build/up path itself is covered by the manual build-test
+# against a throwaway manifest (see PLN/LOG - Baked-in Plugins).
 
 # SC2015 (`A && pass || fail` is not if-else): intentional here — pass() is a
 # bare echo and cannot fail, so the || arm only runs when the check fails.
@@ -30,6 +32,11 @@ DOMAIN_RE='^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]
 
 echo "── syntax"
 bash -n up.sh   && pass "bash -n up.sh"   || fail "up.sh has syntax errors"
+if command -v python3 >/dev/null; then
+    python3 -m py_compile src/wire_plugins.py 2>/dev/null \
+        && pass "py_compile src/wire_plugins.py" \
+        || fail "src/wire_plugins.py has syntax errors"
+fi
 
 echo "── plugin files"
 found=0
@@ -128,35 +135,16 @@ add_egress_domain "api.foo.com"
     && pass "dedup is literal — api-foo.com does not swallow api.foo.com" \
     || fail "dedup treated the domain as a regex: '$EGRESS'"
 
-# In-container side: duplicate/collision detection, then the additive merge
-J='{"mcpServers":{"coding":{"type":"http","url":"http://host.docker.internal:8811/mcp"}}}'
-DUP=$(printf "%s" "$PLUGIN_MCP_ENTRIES" | jq -rs "[.[] | keys[]] | group_by(.) | map(select(length > 1) | .[0]) | join(\", \")")
-[ -z "$DUP" ] \
-    && pass "no duplicate server names across enabled plugins" \
-    || fail "cross-plugin duplicate detection false positive: $DUP"
-DUP=$(printf '%s\n%s\n' '{"serena":{"command":"a"}}' '{"serena":{"command":"b"}}' \
-      | jq -rs "[.[] | keys[]] | group_by(.) | map(select(length > 1) | .[0]) | join(\", \")")
-[ "$DUP" = "serena" ] \
-    && pass "cross-plugin duplicate is detected" \
-    || fail "cross-plugin duplicate NOT detected"
-
-PLUGINS_OBJ=$(printf "%s" "$PLUGIN_MCP_ENTRIES" | jq -s "add // {}")
-CLASH=$(echo "$J" | jq -r --argjson p "$PLUGINS_OBJ" "(.mcpServers | keys) as \$k | \$p | keys | map(select(. as \$n | \$k | index(\$n))) | join(\", \")")
-[ -z "$CLASH" ] \
-    && pass "no collision between plugin and generated server names" \
-    || fail "collision detection false positive: $CLASH"
-CLASH=$(echo "$J" | jq -r --argjson p '{"coding":{"command":"evil"}}' "(.mcpServers | keys) as \$k | \$p | keys | map(select(. as \$n | \$k | index(\$n))) | join(\", \")")
-[ "$CLASH" = "coding" ] \
-    && pass "plugin shadowing a generated server IS detected" \
-    || fail "collision with generated server NOT detected"
-
-J=$(echo "$J" | jq --argjson p "$PLUGINS_OBJ" ".mcpServers += \$p")
-[ "$(echo "$J" | jq -r '.mcpServers.serena.command')" = "bash" ] \
-    && pass ".mcp.json merge carries serena (command intact)" \
-    || fail "merged .mcp.json missing serena: $J"
-[ "$(echo "$J" | jq -r '.mcpServers.coding.type')" = "http" ] \
-    && pass "merge is additive (existing servers preserved)" \
-    || fail "merge clobbered existing mcpServers: $J"
+# The extraction contract wire_plugins.py consumes: each entry is ONE line
+# of valid JSON, and up.sh's paste-join turns them into a JSON array (the
+# exec payload shape). The merges themselves are unit-tested in Python.
+printf '%s' "$PLUGIN_MCP_ENTRIES" | head -1 | jq -e 'has("serena")' >/dev/null \
+    && pass "extracted entry is one-line JSON with the serena server" \
+    || fail "extraction contract broken: '$PLUGIN_MCP_ENTRIES'"
+JOINED=$(printf '%s' "$PLUGIN_MCP_ENTRIES" | paste -sd, -)
+printf '[%s]' "$JOINED" | jq -e 'length == 1' >/dev/null \
+    && pass "paste-join yields a valid JSON array (the exec payload shape)" \
+    || fail "payload assembly would produce invalid JSON: [$JOINED]"
 
 echo "── host-side mcp entry validation (mirrors up.sh's yq rows + checks)"
 # Same row extraction up.sh runs per plugin: name, command type, extra keys
@@ -194,54 +182,6 @@ printf '%s' " $PLUGIN_MCP_NAMES " | grep -qF " serena " \
     && pass "duplicate server name across plugins is detected" \
     || fail "duplicate name membership test broken"
 
-echo "── per-agent wiring simulation (JSON merge + sidecar, codex TOML)"
-# cursor/gemini/pi: same merge the in-container wire_json runs — deletes the
-# previously-managed names (sidecar list), merges current plugins, preserves
-# identity/hand-added servers.
-AGENT_CFG='{"mcpServers":{"obsidian-annotated":{"url":"https://x/mcp"},"oldplug":{"command":"gone"}}}'
-OLD='["oldplug"]'
-MERGED=$(echo "$AGENT_CFG" | jq --argjson p "$PLUGINS_OBJ" --argjson old "$OLD" \
-    ".mcpServers = (((.mcpServers // {}) | with_entries(select(.key as \$k | \$old | index(\$k) | not))) + \$p)")
-[ "$(echo "$MERGED" | jq -r '.mcpServers.serena.command')" = "bash" ] \
-    && pass "agent config merge carries serena" \
-    || fail "agent config merge missing serena: $MERGED"
-[ "$(echo "$MERGED" | jq -r '.mcpServers["obsidian-annotated"].url')" = "https://x/mcp" ] \
-    && pass "agent config merge preserves identity servers" \
-    || fail "agent config merge clobbered obsidian: $MERGED"
-[ "$(echo "$MERGED" | jq -r '.mcpServers.oldplug')" = "null" ] \
-    && pass "stale plugin entry (sidecar-listed) is removed" \
-    || fail "stale plugin entry survived: $MERGED"
-OLD2=$(echo "$PLUGINS_OBJ" | jq -c "keys")
-MERGED2=$(echo "$MERGED" | jq --argjson p "$PLUGINS_OBJ" --argjson old "$OLD2" \
-    ".mcpServers = (((.mcpServers // {}) | with_entries(select(.key as \$k | \$old | index(\$k) | not))) + \$p)")
-[ "$MERGED" = "$MERGED2" ] \
-    && pass "rerun with the updated sidecar is idempotent" \
-    || fail "delete-then-merge rerun changed the config: $MERGED2"
-
-# codex: stdio entries render to a [mcp_servers.*] TOML block; @json emits
-# TOML basic strings/arrays (JSON string+array escapes are a TOML subset).
-TOML=$(printf "%s" "$PLUGINS_OBJ" | jq -r "to_entries[] | \"[mcp_servers.\(.key)]\ncommand = \(.value.command | @json)\nargs = \(.value.args // [] | @json)\n\"")
-echo "$TOML" | grep -qF "[mcp_servers.serena]" \
-    && pass "codex TOML block has the serena table header" \
-    || fail "codex TOML missing table header: $TOML"
-echo "$TOML" | grep -qF 'command = "bash"' \
-    && pass "codex TOML renders the command" \
-    || fail "codex TOML command wrong: $TOML"
-# The managed-block replace: sed range-delete removes ONLY a previous block
-PREV=$(printf '%s\n' "keep = 1" "# >>> dev-agent plugin MCP (managed) >>>" "[mcp_servers.old]" "# <<< dev-agent plugin MCP <<<" "also_keep = 2")
-STRIPPED=$(echo "$PREV" | sed "/^# >>> dev-agent plugin MCP/,/^# <<< dev-agent plugin MCP/d")
-[ "$STRIPPED" = "$(printf 'keep = 1\nalso_keep = 2')" ] \
-    && pass "codex managed-block strip keeps surrounding config" \
-    || fail "codex managed-block strip broken: '$STRIPPED'"
-# An opening marker with no closer must be DETECTED (up.sh hard-fails there;
-# blindly stripping would range-delete to EOF and eat the user's config)
-UNTERM=$(printf '%s\n' "keep = 1" "# >>> dev-agent plugin MCP (managed) >>>" "user_config = 2")
-if echo "$UNTERM" | grep -q "^# >>> dev-agent plugin MCP" && ! echo "$UNTERM" | grep -q "^# <<< dev-agent plugin MCP"; then
-    pass "unterminated managed block is detected before the strip"
-else
-    fail "unterminated managed block NOT detected — strip would delete to EOF"
-fi
-
 # Name validation must reject path-escaping input (the up.sh hard-fail).
 printf '%s' "../evil" | grep -qE "$NAME_RE" \
     && fail "charset check accepted '../evil'" \
@@ -255,9 +195,11 @@ for bad in "https://x.com" "x.com/path" "*.foo.com" "foo" "a b.com"; do
 done
 
 echo "── drift guard (expressions this suite mirrors must exist in up.sh)"
-# The wiring simulation above tests COPIES of up.sh's logic. These literal
-# greps fail the suite the moment the original changes, forcing the mirror
-# (and these assertions) to be updated together with up.sh.
+# The yq simulation above tests COPIES of up.sh's host-side extraction. These
+# literal greps fail the suite the moment the original changes, forcing the
+# mirror (and these assertions) to be updated together with up.sh. The
+# in-container logic needs no drift guard anymore: the unit tests import the
+# real wire_plugins.py, and the last two pins prove up.sh still execs it.
 while IFS= read -r expr; do
     [ -n "$expr" ] || continue
     grep -qF -- "$expr" up.sh \
@@ -268,17 +210,12 @@ done <<'DRIFT'
 .plugins // [] | tag
 (.egress // []) | join(" ")
 yq -o=json -I=0 '.mcp // {}'
-jq -s "add // {}"
-.mcpServers += \$p
 [A-Za-z0-9_-]+$
 add_egress_domain
-group_by(.) | map(select(length > 1)
 (.mcp // {}) | to_entries[] | [.key, (.value.command | type)
 coding|proxyman|browser|obsidian-annotated
-with_entries(select(.key as \$k | \$old | index(\$k) | not))
-if [ -s "$F" ]
-[mcp_servers.\(.key)]
-/^# >>> dev-agent plugin MCP/,/^# <<< dev-agent plugin MCP/d
+paste -sd, -
+python3 /usr/local/lib/dev-agent/wire_plugins.py
 DRIFT
 grep -qF -- "$DOMAIN_RE" up.sh \
     && pass "up.sh still contains the domain validation regex" \
@@ -296,6 +233,18 @@ done
 grep -qF -- "yq -e -r '.install'" Dockerfile \
     && pass "Dockerfile bake uses yq -e (missing install: fails the build)" \
     || fail "Dockerfile bake no longer hard-fails on a missing install: key"
+grep -qF -- "COPY src/wire_plugins.py" Dockerfile \
+    && pass "Dockerfile bakes src/wire_plugins.py into the image" \
+    || fail "Dockerfile no longer bakes wire_plugins.py (up.sh execs it)"
+
+echo "── python unit tests (src/wire_plugins.py)"
+if command -v python3 >/dev/null; then
+    python3 -m unittest discover -s tests >/dev/null 2>&1 \
+        && pass "python3 -m unittest discover -s tests" \
+        || fail "unit tests failed (run: python3 -m unittest discover -s tests -v)"
+else
+    echo "  (python3 not installed — skipped; the suite also runs in-container)"
+fi
 
 rm -f "$MANIFEST.scalar"
 echo ""

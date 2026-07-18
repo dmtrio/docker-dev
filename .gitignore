@@ -12,3 +12,6 @@ containers/*.yml
 .mcp.json
 # serena plugin's per-project state (LSP cache + agent-written memories)
 .serena/
+
+# Python bytecode (tests / wiring module)
+__pycache__/
