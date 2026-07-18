@@ -68,8 +68,12 @@ capabilities:
 # host service, no port, no secret; contrast with capabilities above). Each
 # name maps to plugins/<name>.yml in this repo: its binary is already baked
 # into the shared image at build; listing it here wires its MCP server into
-# Claude's .mcp.json (auto-approved) and its egress domains into this
-# container's firewall. Unlisted plugins stay dormant in the image.
+# EVERY installed MCP-capable agent — claude's .mcp.json (auto-approved),
+# cursor's/gemini's/pi's JSON configs, codex's config.toml (aider has no
+# MCP; pi's is inert until the pi-mcp-adapter extension is installed) — and
+# its egress domains into this container's firewall. Unlisted plugins stay
+# dormant in the image, and removing one here also removes its wiring on
+# the next up.
 #   plugins: [serena]              # semantic code retrieval + editing over LSP
 plugins: []
 

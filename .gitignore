@@ -7,3 +7,8 @@ secrets.env
 # subnets, identity-ref naming) — keep only the generic TEMPLATE.yml
 containers/*.yml
 !containers/TEMPLATE.yml
+# generated into each container's workspace at up time (and symlinked into
+# worktrees) — only visible to git when the workspace repo is this one
+.mcp.json
+# serena plugin's per-project state (LSP cache + agent-written memories)
+.serena/

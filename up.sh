@@ -216,7 +216,25 @@ add_egress_domain() {
 # crash-loop the container at boot with only a generic firewall error.
 # set -f: the unquoted expansion must not glob a wildcard entry like
 # *.foo.com against the CWD — let it reach validation and fail by name.
+#
+# The mcp server entries are validated here too (still yq-only, and BEFORE
+# the image build so a bad manifest fails in seconds, not minutes):
+# - names must be [A-Za-z0-9_-]: they are wired as bare TOML keys into
+#   codex's config.toml, where a dot or space breaks the whole file;
+# - generated server names are reserved — the per-agent merges below are
+#   last-wins, so a plugin adopting e.g. obsidian-annotated would silently
+#   shadow a pre-approved or identity-bearing entry (including identities
+#   the Claude-path collision check never sees, like a cursor-only ref);
+# - entries carry ONLY command + args, so every agent — including codex's
+#   TOML rendering, which knows exactly those two fields — wires the exact
+#   same server (a field like env: silently working in four agents and
+#   dropped in the fifth is worse than an error here);
+# - a server name defined by two enabled plugins would last-wins-merge
+#   silently in the agent configs, so duplicates hard-fail (the Claude-path
+#   DUP check catches this too, but that script is skipped when the repo
+#   ships its own .mcp.json — this one is unconditional).
 PLUGIN_MCP_ENTRIES=""
+PLUGIN_MCP_NAMES=""
 set -f
 for p in $PLUGINS; do
     for d in $(yq -r '(.egress // []) | join(" ")' "$SCRIPT_DIR/plugins/$p.yml"); do
@@ -226,6 +244,26 @@ for p in $PLUGINS; do
         fi
         add_egress_domain "$d"
     done
+    MCP_ROWS=$(yq -r '(.mcp // {}) | to_entries[] | [.key, (.value.command | type), ([.value | keys | .[] | select(. != "command" and . != "args")] | join(","))] | @tsv' "$SCRIPT_DIR/plugins/$p.yml")
+    while IFS=$'\t' read -r n ctype extra; do
+        [ -n "$n" ] || continue
+        if ! printf '%s' "$n" | grep -qE '^[A-Za-z0-9_-]+$'; then
+            echo "Error: plugin '$p' mcp server '$n': illegal characters in name (allowed: letters, digits, underscore, dash — it becomes a TOML/JSON key)"; exit 1
+        fi
+        case "$n" in coding|proxyman|browser|obsidian-annotated)
+            echo "Error: plugin '$p' mcp server '$n': name is reserved for generated servers"; exit 1 ;;
+        esac
+        if [ "$ctype" != "!!str" ]; then
+            echo "Error: plugin '$p' mcp server '$n': command must be a string (local stdio server)"; exit 1
+        fi
+        if [ -n "$extra" ]; then
+            echo "Error: plugin '$p' mcp server '$n': unsupported field(s): $extra (only command and args are wired, identically for every agent)"; exit 1
+        fi
+        if printf '%s' " $PLUGIN_MCP_NAMES " | grep -qF " $n "; then
+            echo "Error: multiple enabled plugins define the same MCP server name: $n"; exit 1
+        fi
+        PLUGIN_MCP_NAMES="${PLUGIN_MCP_NAMES:+$PLUGIN_MCP_NAMES }$n"
+    done <<< "$MCP_ROWS"
     PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES$(yq -o=json -I=0 '.mcp // {}' "$SCRIPT_DIR/plugins/$p.yml")
 "
 done
@@ -550,21 +588,32 @@ echo "  ✓ MCP servers pre-approved for claude ($(echo "$SERVERS" | jq -r "join
 # files, mode 600, never inside the repo, regenerated from secrets.env on
 # every up (rotation flows). pi needs the pi-mcp-adapter extension for its
 # file to take effect. codex is SKIPPED for now: ~/.codex is container-local
-# (per-container volume), but its remote-MCP config.toml format is unverified.
+# (per-container volume), but its remote-MCP config.toml format is unverified
+# (stdio plugin servers ARE wired into config.toml in the section below —
+# only this remote/HTTP identity form is pending).
 for ref in $OBS_REFS; do
     a=$(agent_for_ref "$ref")
     eval "v=\$OBSIDIAN_KEY_$ref"
     case "$a" in
         cursor-agent)
+            # Merge into an existing file (like gemini below) instead of
+            # regenerating it: the file also carries plugin MCP entries,
+            # which a from-scratch rewrite would silently drop. -s not -f:
+            # an empty file must take the create path (jq on empty input
+            # exits 0 with empty output, which would blank the config).
             docker exec -u coder -e K="$v" "dev-agent-$NAME" bash -c '
 mkdir -p /home/coder/.cursor
-jq -n --arg k "$K" "{mcpServers: {\"obsidian-annotated\": {url: \"https://mcp-obsidian.dmetr.io/mcp\", headers: {Authorization: (\"Bearer \" + \$k)}}}}" > /home/coder/.cursor/mcp.json
+if [ -s /home/coder/.cursor/mcp.json ]; then
+  jq --arg k "$K" ".mcpServers[\"obsidian-annotated\"] = {url: \"https://mcp-obsidian.dmetr.io/mcp\", headers: {Authorization: (\"Bearer \" + \$k)}}" /home/coder/.cursor/mcp.json > /tmp/c.json && mv /tmp/c.json /home/coder/.cursor/mcp.json
+else
+  jq -n --arg k "$K" "{mcpServers: {\"obsidian-annotated\": {url: \"https://mcp-obsidian.dmetr.io/mcp\", headers: {Authorization: (\"Bearer \" + \$k)}}}}" > /home/coder/.cursor/mcp.json
+fi
 chmod 600 /home/coder/.cursor/mcp.json
 echo "  ✓ cursor-agent MCP config (literal key: env interpolation broken for remote headers)"' ;;
         gemini)
             docker exec -u coder -e K="$v" "dev-agent-$NAME" bash -c '
 mkdir -p /home/coder/.gemini
-if [ -f /home/coder/.gemini/settings.json ]; then
+if [ -s /home/coder/.gemini/settings.json ]; then
   jq --arg k "$K" ".mcpServers[\"obsidian-annotated\"] = {httpUrl: \"https://mcp-obsidian.dmetr.io/mcp\", headers: {Authorization: (\"Bearer \" + \$k)}}" /home/coder/.gemini/settings.json > /tmp/g.json && mv /tmp/g.json /home/coder/.gemini/settings.json
 else
   jq -n --arg k "$K" "{mcpServers: {\"obsidian-annotated\": {httpUrl: \"https://mcp-obsidian.dmetr.io/mcp\", headers: {Authorization: (\"Bearer \" + \$k)}}}}" > /home/coder/.gemini/settings.json
@@ -584,6 +633,86 @@ echo "  ✓ pi MCP config written (NOTE: inert until pi-mcp-adapter extension is
                  "to codex processes as OBSIDIAN_ANNOTATED_KEY via its shim." ;;
     esac
 done
+
+# ── Wire plugin MCP servers into the other installed agents ──────────────────
+# Claude got the plugin entries via the regenerated .mcp.json above. The same
+# stdio blocks (command + args only — enforced at manifest read; no secrets,
+# nothing to rotate) are wired here for cursor-agent, gemini, pi, and codex
+# in ONE exec that ALWAYS runs when any of them is installed — even with no
+# plugins — so entries from a plugin removed from the manifest are cleaned
+# up, not orphaned (Claude gets this for free from wholesale regeneration).
+# - cursor/gemini/pi (JSON): additive jq merge into .mcpServers; the set of
+#   plugin-managed names is tracked in a sidecar ($F.dev-agent-plugins) so
+#   stale plugin entries are deleted without touching identity or hand-added
+#   servers. set -e: a merge failure (e.g. hand-broken JSON) must abort
+#   up.sh loudly, never print a false ✓.
+# - codex (TOML — yq v4.44 cannot emit TOML maps, so jq renders the block):
+#   a managed marker block, stripped and re-appended each run; hand edits
+#   outside the markers survive, and an opening marker without its closer
+#   hard-fails rather than letting the range-delete eat the rest of the file.
+# - aider: no MCP support.
+# Like Claude, agents launch stdio servers with cwd = where the agent was
+# started, so a plugin's "$PWD" project-rooting follows worktrees. Unlike
+# Claude's per-project .mcp.json, these configs are global (home-dir):
+# starting an agent outside a project roots such a server there.
+if [ "$INSTALL_CURSOR" = "true" ] || [ "$INSTALL_GEMINI" = "true" ] || \
+   [ "$INSTALL_PI" = "true" ] || [ "$INSTALL_CODEX" = "true" ]; then
+    docker exec -u coder -e PLUGIN_MCP="$PLUGIN_MCP_ENTRIES" \
+        -e WIRE_CURSOR="$INSTALL_CURSOR" -e WIRE_GEMINI="$INSTALL_GEMINI" \
+        -e WIRE_PI="$INSTALL_PI" -e WIRE_CODEX="$INSTALL_CODEX" \
+        "dev-agent-$NAME" bash -c '
+set -e
+P=$(printf "%s" "$PLUGIN_MCP" | jq -s "add // {}")
+NAMES=$(printf "%s" "$P" | jq -c "keys")
+wire_json() {
+    F="$1"
+    OLD="[]"
+    [ -s "$F.dev-agent-plugins" ] && OLD=$(cat "$F.dev-agent-plugins")
+    if [ -s "$F" ]; then
+        jq --argjson p "$P" --argjson old "$OLD" \
+            ".mcpServers = (((.mcpServers // {}) | with_entries(select(.key as \$k | \$old | index(\$k) | not))) + \$p)" \
+            "$F" > "$F.tmp"
+        mv "$F.tmp" "$F"
+    else
+        mkdir -p "$(dirname "$F")"
+        jq -n --argjson p "$P" "{mcpServers: \$p}" > "$F"
+    fi
+    printf "%s\n" "$NAMES" > "$F.dev-agent-plugins"
+    chmod 600 "$F" "$F.dev-agent-plugins"
+    echo "  ✓ plugin MCP servers synced into $F"
+}
+[ "$WIRE_CURSOR" = "true" ] && wire_json /home/coder/.cursor/mcp.json
+[ "$WIRE_GEMINI" = "true" ] && wire_json /home/coder/.gemini/settings.json
+if [ "$WIRE_PI" = "true" ]; then
+    wire_json /home/coder/.pi/agent/mcp.json
+    echo "    (pi: inert until the pi-mcp-adapter extension is installed)"
+fi
+if [ "$WIRE_CODEX" = "true" ]; then
+    F=/home/coder/.codex/config.toml
+    BLOCK=$(printf "%s" "$P" | jq -r "to_entries[] | \"[mcp_servers.\(.key)]\ncommand = \(.value.command | @json)\nargs = \(.value.args // [] | @json)\n\"")
+    mkdir -p /home/coder/.codex
+    [ -f "$F" ] || : > "$F"
+    if grep -q "^# >>> dev-agent plugin MCP" "$F" && ! grep -q "^# <<< dev-agent plugin MCP" "$F"; then
+        echo "Error: $F has an opening dev-agent plugin marker but no closing one — repair the markers (the strip would delete everything below them)"
+        exit 1
+    fi
+    sed "/^# >>> dev-agent plugin MCP/,/^# <<< dev-agent plugin MCP/d" "$F" > "$F.tmp"
+    if [ -n "$BLOCK" ]; then
+        {
+            cat "$F.tmp"
+            echo "# >>> dev-agent plugin MCP (managed by up.sh; edits inside are overwritten) >>>"
+            printf "%s\n" "$BLOCK"
+            echo "# <<< dev-agent plugin MCP <<<"
+        } > "$F.new"
+        mv "$F.new" "$F"
+        rm -f "$F.tmp"
+    else
+        mv "$F.tmp" "$F"
+    fi
+    chmod 600 "$F"
+    echo "  ✓ plugin MCP servers synced into $F (managed block)"
+fi'
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
