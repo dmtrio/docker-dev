@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
-"""In-container agent-config wiring, invoked by up.sh after the container is up.
+"""Agent-config wiring for up.sh — both sides of one docker exec.
 
-Reads ONE JSON payload on stdin and wires MCP servers into every installed
-agent's config files — the work that used to live in up.sh as jq/sed programs
-inside triple-quoted `docker exec bash -c` strings:
+up.sh runs this file twice per `up`, so the payload schema lives in exactly
+one place and both halves are unit-testable:
+
+  host side:      python3 src/wire_plugins.py --build-payload
+                  reads env vars (see build_payload) and prints the JSON
+                  payload; booleans use the same strict string comparison the
+                  old bash used ([ "$X" = "true" ]), so a manifest value like
+                  `gateway: yes` stays OFF instead of leaking into the JSON.
+  container side: python3 /usr/local/lib/dev-agent/wire_plugins.py
+                  reads that payload on stdin and wires MCP servers into every
+                  installed agent's config files — the work that used to live
+                  in up.sh as jq/sed programs inside triple-quoted
+                  `docker exec bash -c` strings.
+
+Payload:
 
     {
       "wire":         {"cursor": bool, "gemini": bool, "pi": bool, "codex": bool},
@@ -19,13 +31,18 @@ inside triple-quoted `docker exec bash -c` strings:
   collision must never silently replace an entry.
 - Identity keys never ride in the payload: each identities[] element names an
   environment variable (set on the docker exec) that holds the key, so the
-  payload itself is secret-free.
+  payload itself is secret-free. Only cursor-agent/gemini/pi keys are shipped
+  at all — claude's rides in its shim env, codex's is pending (warning only).
+- Version skew between the two halves cannot happen in the up.sh flow: the
+  payload is built from the repo checkout and the consumer is baked from the
+  same checkout by the `docker compose up --build` that just ran.
 
-Stdlib only — the image guarantees python3 but nothing else, and the TOML we
-emit (bare validated keys, JSON-escaped strings/arrays, which are a TOML
-subset) doesn't need a writer library. Baked into the image at
-/usr/local/lib/dev-agent/wire_plugins.py. Every config write is atomic
-(tmp + rename) with the final mode set before the rename.
+Stdlib only — dev-Mac CLT and the image both guarantee python3 but nothing
+else, and the TOML we emit (bare validated keys, JSON-escaped strings/arrays,
+which are a TOML subset) doesn't need a writer library. Every config write is
+atomic (tmp + rename) with the final mode set before the rename, except
+~/.claude.json which is written through in place (it predates us and may be a
+symlink into someone's dotfiles — the old `cat >` behavior).
 """
 
 import json
@@ -34,6 +51,13 @@ import sys
 from pathlib import Path
 
 OBSIDIAN_URL = "https://mcp-obsidian.dmetr.io/mcp"
+
+# Names of servers up.sh can generate into Claude's .mcp.json. A plugin
+# adopting one would silently last-wins-shadow a pre-approved or
+# identity-bearing entry (cursor/gemini/pi identities included — those never
+# pass through generate_claude_mcp's clash check). The host validates these
+# too, for fast failure BEFORE the image build; this check is the backstop.
+RESERVED_SERVER_NAMES = frozenset({"coding", "proxyman", "browser", "obsidian-annotated"})
 
 # The codex managed block. Detection matches on the PREFIX (like the old sed
 # ranges did), so a stale block written by an older up.sh with different
@@ -54,7 +78,8 @@ def _write_atomic(path, text, mode=None, errors=None):
     umask default (e.g. the repo's .mcp.json, which holds ${VAR} refs, not
     secrets)."""
     tmp = path.parent / (path.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8", errors=errors) as f:
+    # newline="": no newline translation — what we assembled is what lands.
+    with open(tmp, "w", encoding="utf-8", errors=errors, newline="") as f:
         f.write(text)
     if mode is not None:
         os.chmod(tmp, mode)
@@ -76,24 +101,47 @@ def _load_json_file(path):
 
 def merge_plugin_entries(entries):
     """Merge the per-plugin mcp objects into one dict (insertion order, like
-    jq `add`), hard-failing on a server name defined by more than one plugin."""
+    jq `add`), hard-failing on a server name defined by more than one plugin
+    or squatting on a reserved generated name."""
     merged = {}
-    seen = set()
     dups = set()
     for entry in entries:
         if not isinstance(entry, dict):
             raise WireError("plugin_mcp_entries must be JSON objects")
-        for name in entry:
-            if name in seen:
-                dups.add(name)
-            seen.add(name)
+        dups.update(n for n in entry if n in merged)
         merged.update(entry)
     if dups:
         raise WireError(
             "multiple enabled plugins define the same MCP server name(s): "
             + ", ".join(sorted(dups))
         )
+    reserved = sorted(n for n in merged if n in RESERVED_SERVER_NAMES)
+    if reserved:
+        raise WireError(
+            "plugin MCP server name(s) reserved for generated servers: "
+            + ", ".join(reserved)
+        )
     return merged
+
+
+def _load_servers(path):
+    """Load an agent config as (data, servers-dict), or (None, None) when the
+    file is missing or ZERO-BYTE — the caller then takes the create path. The
+    zero-byte case is load-bearing: the old `jq` pipeline exited 0 with empty
+    output on empty input, which blanked the config; this helper is the single
+    home of the fix for both the identity and plugin merge paths."""
+    if not (path.is_file() and path.stat().st_size > 0):
+        return None, None
+    data = _load_json_file(path)  # hand-broken JSON must abort loudly
+    if not isinstance(data, dict):
+        raise WireError(f"{path}: expected a JSON object at the top level")
+    servers = data.get("mcpServers")
+    if servers is None:
+        servers = {}
+        data["mcpServers"] = servers
+    if not isinstance(servers, dict):
+        raise WireError(f"{path}: .mcpServers is not an object")
+    return data, servers
 
 
 def generate_claude_mcp(workspace, caps, plugins):
@@ -158,13 +206,24 @@ def generate_claude_mcp(workspace, caps, plugins):
 
 def preapprove_claude(home, workspace):
     """Approval state lives in ~/.claude.json; since .mcp.json came from the
-    manifest, its servers are approved by construction. Merge, don't clobber."""
+    manifest, its servers are approved by construction. Merge, don't clobber.
+
+    .mcp.json may be repo-shipped rather than generated (that's a supported
+    opt-out), so a shape we don't understand is a skip-with-warning, not an
+    abort — the other agents' wiring must not die on a file we promised to
+    leave alone. ~/.claude.json itself failing to parse IS an abort: merging
+    into a corrupt state file can only destroy it."""
     mcp_path = workspace / "main" / ".mcp.json"
     if not mcp_path.is_file():
         return
-    mcp = _load_json_file(mcp_path)
+    try:
+        mcp = _load_json_file(mcp_path)
+    except WireError as e:
+        print(f"  ⚠ skipping claude pre-approval — {e}")
+        return
     if not isinstance(mcp, dict) or not isinstance(mcp.get("mcpServers"), dict):
-        raise WireError(f"{mcp_path} has no mcpServers object — cannot pre-approve")
+        print(f"  ⚠ skipping claude pre-approval — {mcp_path} has no mcpServers object")
+        return
     servers = sorted(mcp["mcpServers"])
 
     cj = home / ".claude.json"
@@ -180,29 +239,24 @@ def preapprove_claude(home, workspace):
     project["enabledMcpjsonServers"] = servers
     project["hasTrustDialogAccepted"] = True
 
-    # Preserve the file's existing mode (it may predate us); default otherwise.
-    mode = (cj.stat().st_mode & 0o777) if cj.is_file() else None
-    _write_atomic(cj, _dump_json(state), mode=mode)
+    # Write THROUGH rather than tmp+rename: the file predates this module and
+    # may be a symlink (dotfiles) — a rename would swap in a detached regular
+    # file. Same semantics as the old `cat /tmp/cj.json > ~/.claude.json`,
+    # inode, mode, and link target all preserved.
+    with open(cj, "w", encoding="utf-8") as f:
+        f.write(_dump_json(state))
     print("  ✓ MCP servers pre-approved for claude (" + ", ".join(servers) + ")")
 
 
 def _merge_identity_entry(path, entry):
     """Set mcpServers["obsidian-annotated"] in an existing config (preserving
-    plugin and hand-added servers) or create the file. A zero-byte file takes
-    the create path — the old `jq` pipeline would have blanked the config on
-    empty input, which is exactly the bug class this module removes."""
+    plugin and hand-added servers) or create the file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_file() and path.stat().st_size > 0:
-        data = _load_json_file(path)
-        if not isinstance(data, dict):
-            raise WireError(f"{path}: expected a JSON object at the top level")
-        if data.get("mcpServers") is None:
-            data["mcpServers"] = {}
-        if not isinstance(data["mcpServers"], dict):
-            raise WireError(f"{path}: .mcpServers is not an object")
-        data["mcpServers"]["obsidian-annotated"] = entry
-    else:
+    data, servers = _load_servers(path)
+    if data is None:
         data = {"mcpServers": {"obsidian-annotated": entry}}
+    else:
+        servers["obsidian-annotated"] = entry
     _write_atomic(path, _dump_json(data), mode=0o600)
 
 
@@ -254,21 +308,14 @@ def wire_plugin_servers_json(path, plugins):
         if not isinstance(old, list):
             raise WireError(f"{sidecar}: expected a JSON array of names")
 
-    if path.is_file() and path.stat().st_size > 0:
-        data = _load_json_file(path)  # hand-broken JSON must abort loudly
-        if not isinstance(data, dict):
-            raise WireError(f"{path}: expected a JSON object at the top level")
-        servers = data.get("mcpServers")
-        if servers is None:
-            servers = {}
-        if not isinstance(servers, dict):
-            raise WireError(f"{path}: .mcpServers is not an object")
+    data, servers = _load_servers(path)
+    if data is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {"mcpServers": dict(plugins)}
+    else:
         merged = {k: v for k, v in servers.items() if k not in old}
         merged.update(plugins)
         data["mcpServers"] = merged
-    else:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"mcpServers": dict(plugins)}
 
     _write_atomic(path, _dump_json(data), mode=0o600)
     _write_atomic(sidecar, json.dumps(sorted(plugins), separators=(",", ":")) + "\n", mode=0o600)
@@ -295,16 +342,16 @@ def wire_codex_toml(path, plugins):
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.touch()
-    raw = path.read_text(encoding="utf-8", errors="surrogateescape")
-    lines = raw.splitlines()
-
-    has_open = any(l.startswith(CODEX_OPEN_PREFIX) for l in lines)
-    has_close = any(l.startswith(CODEX_CLOSE_PREFIX) for l in lines)
-    if has_open and not has_close:
-        raise WireError(
-            f"{path} has an opening dev-agent plugin marker but no closing one "
-            "— repair the markers (the strip would delete everything below them)"
-        )
+    # newline="" disables universal-newline translation on read, and the
+    # split is on \n ONLY (like the old sed) — str.splitlines() would also
+    # split on \r/\f/U+2028…, silently rewriting a CRLF or exotic-char
+    # config. A trailing newline yields one empty tail element — drop it so
+    # the rejoin below is the single place that decides newline termination.
+    with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
+        raw = f.read()
+    lines = raw.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
 
     kept = []
     in_block = False
@@ -317,6 +364,15 @@ def wire_codex_toml(path, plugins):
                 in_block = False
             continue
         kept.append(line)
+    if in_block:
+        # Stricter than the old grep guard on purpose: a block still open at
+        # EOF is caught even when an EARLIER block closed properly (stray
+        # second opener, or a closer that sits above its opener) — the old
+        # sed silently deleted from the stray opener to EOF in those cases.
+        raise WireError(
+            f"{path} has an opening dev-agent plugin marker but no closing one "
+            "— repair the markers (the strip would delete everything below them)"
+        )
     stripped = "\n".join(kept) + "\n" if kept else ""
 
     if plugins:
@@ -360,14 +416,74 @@ def run(payload, home, workspace, env):
         wire_codex_toml(home / ".codex" / "config.toml", plugins)
 
 
-def main():
+def build_payload(env):
+    """Host side: assemble the payload from env vars set by up.sh.
+
+    Booleans arrive as the raw yq scalars (WIRE_CURSOR/…, CAP_GATEWAY/…) and
+    only the literal string "true" turns a flag on — the exact semantics of
+    the old `[ "$X" = "true" ]` checks, so a manifest `gateway: yes` or
+    `gateway: 1` stays off instead of flipping on or corrupting the JSON.
+    PLUGIN_MCP_ENTRIES is the newline-separated one-line-JSON-per-plugin
+    accumulation from yq; IDENTITY_AGENTS is space-separated "agent:KEY_ENV"
+    pairs (KEY_ENV empty for codex, whose key is deliberately never shipped).
+    """
+    def flag(name):
+        return env.get(name) == "true"
+
+    entries = []
+    for line in (env.get("PLUGIN_MCP_ENTRIES") or "").splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError as e:
+            raise WireError(f"plugin mcp extraction produced invalid JSON ({e}): {line}")
+        if not isinstance(entry, dict):
+            raise WireError(f"plugin mcp extraction line is not a JSON object: {line}")
+        entries.append(entry)
+
+    identities = []
+    for pair in (env.get("IDENTITY_AGENTS") or "").split():
+        agent, _, key_env = pair.partition(":")
+        identities.append({"agent": agent, "key_env": key_env})
+
+    return {
+        "wire": {name: flag("WIRE_" + name.upper())
+                 for name in ("cursor", "gemini", "pi", "codex")},
+        "capabilities": {name: flag("CAP_" + name.upper())
+                         for name in ("gateway", "proxyman", "browser", "obsidian")},
+        "plugin_mcp_entries": entries,
+        "identities": identities,
+    }
+
+
+def _home():
+    """The wiring targets the exec user's REAL home (passwd), like the old
+    hardcoded /home/coder paths — not $HOME, which a future `ENV HOME=…` in
+    the image would leak into `docker exec -u coder`."""
+    try:
+        import pwd
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (ImportError, KeyError):
+        return Path(os.environ.get("HOME", "/home/coder"))
+
+
+def main(argv):
+    if "--build-payload" in argv:
+        try:
+            print(json.dumps(build_payload(os.environ)))
+        except WireError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        return 0
+
     try:
         payload = json.load(sys.stdin)
     except ValueError as e:
         print(f"Error: invalid JSON payload on stdin: {e}")
         return 1
     try:
-        run(payload, Path(os.environ.get("HOME", "/home/coder")), Path("/workspace"), os.environ)
+        run(payload, _home(), Path("/workspace"), os.environ)
     except WireError as e:
         print(f"Error: {e}")
         return 1
@@ -375,4 +491,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

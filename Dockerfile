@@ -197,10 +197,6 @@ RUN apt-get update && apt-get install -y \
 COPY src/init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh
 
-# ── Agent-config wiring module (up.sh execs it after boot) ──────────────────
-# Stdlib-only python3; up.sh pipes it a JSON payload over docker exec -i.
-COPY src/wire_plugins.py /usr/local/lib/dev-agent/wire_plugins.py
-
 # ── SSH server (always installed, runs only when SSH_ENABLED=true) ──────────
 # One image everywhere: Mac attach-mode, homelab, VPS. The manifest's ssh:
 # section turns sshd on at RUNTIME (entrypoint injects SSH_AUTHORIZED_KEY).
@@ -213,6 +209,15 @@ RUN apt-get update && apt-get install -y openssh-server \
         -e 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' \
         /etc/ssh/sshd_config \
     && echo "AllowUsers $USERNAME" >> /etc/ssh/sshd_config
+
+# ── Agent-config wiring module (up.sh execs it after boot) ──────────────────
+# Stdlib-only python3; up.sh pipes it a JSON payload over docker exec -i.
+# Last COPY on purpose: this is the most edit-prone file in the image, and
+# here a change re-runs only this layer, not the apt installs above. chmod:
+# COPY keeps the build-context mode, and a umask-077 clone would otherwise
+# bake a root-only 600 file the coder-user exec can't read.
+COPY src/wire_plugins.py /usr/local/lib/dev-agent/wire_plugins.py
+RUN chmod 644 /usr/local/lib/dev-agent/wire_plugins.py
 
 ENV SSH_ENABLED=false
 

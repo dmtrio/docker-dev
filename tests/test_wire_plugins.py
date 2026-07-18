@@ -122,9 +122,7 @@ class TestGenerateClaudeMcp(QuietTestCase):
             }
             plugins = {"myserena": {"command": "bash", "args": ["-c"]}}
 
-            output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                wire_plugins.generate_claude_mcp(workspace, caps, plugins)
+            wire_plugins.generate_claude_mcp(workspace, caps, plugins)
 
             self.assertTrue(mcp_path.exists())
             self.assertTrue(marker.exists())
@@ -144,9 +142,7 @@ class TestGenerateClaudeMcp(QuietTestCase):
             self.assertEqual(servers["proxyman"]["headers"]["X-API-Key"], "${PROXYMAN_BRIDGE_KEY}")
 
             # Rerun with marker present (idempotency check)
-            output2 = io.StringIO()
-            with contextlib.redirect_stdout(output2):
-                wire_plugins.generate_claude_mcp(workspace, caps, plugins)
+            wire_plugins.generate_claude_mcp(workspace, caps, plugins)
             self.assertEqual(mcp_path.read_text(), content)
 
     def test_all_capabilities_false_no_plugins(self):
@@ -670,9 +666,7 @@ class TestRunIntegration(QuietTestCase):
                 ],
             }
 
-            output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                wire_plugins.run(payload, home, workspace, env)
+            wire_plugins.run(payload, home, workspace, env)
 
             # .mcp.json generated (claude)
             self.assertTrue((main_dir / ".mcp.json").exists())
@@ -750,6 +744,176 @@ class TestRunIntegration(QuietTestCase):
 
             with self.assertRaises(wire_plugins.WireError):
                 wire_plugins.run(payload, home, workspace, {})
+
+
+class TestReservedNames(unittest.TestCase):
+    """merge_plugin_entries is the unconditional backstop for reserved names
+    (the host-side up.sh check is the fast-fail duplicate)."""
+
+    def test_plugin_squatting_reserved_name_raises(self):
+        for name in ("coding", "proxyman", "browser", "obsidian-annotated"):
+            with self.assertRaises(wire_plugins.WireError) as cm:
+                wire_plugins.merge_plugin_entries([{name: {"command": "x"}}])
+            self.assertIn("reserved for generated servers", str(cm.exception))
+
+    def test_ordinary_name_passes(self):
+        merged = wire_plugins.merge_plugin_entries([{"serena": {"command": "x"}}])
+        self.assertIn("serena", merged)
+
+
+class TestPreapproveSkipsBadRepoMcpJson(QuietTestCase):
+    """A repo-shipped .mcp.json we can't understand must skip pre-approval
+    with a warning, not abort the whole wiring run (the file is explicitly
+    not ours; the other agents still need their configs)."""
+
+    def _setup(self, tmp, mcp_content):
+        home = Path(tmp) / "home"
+        home.mkdir()
+        workspace = Path(tmp) / "workspace"
+        (workspace / "main").mkdir(parents=True)
+        (workspace / "main" / ".mcp.json").write_text(mcp_content)
+        return home, workspace
+
+    def test_no_mcpservers_object_warns_and_skips(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, workspace = self._setup(tmp, "{}")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                wire_plugins.preapprove_claude(home, workspace)
+            self.assertIn("skipping claude pre-approval", output.getvalue())
+            self.assertFalse((home / ".claude.json").exists())
+
+    def test_invalid_json_warns_and_skips(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, workspace = self._setup(tmp, "{not json")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                wire_plugins.preapprove_claude(home, workspace)
+            self.assertIn("skipping claude pre-approval", output.getvalue())
+            self.assertFalse((home / ".claude.json").exists())
+
+    def test_symlinked_claude_json_written_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, workspace = self._setup(tmp, '{"mcpServers": {"coding": {}}}')
+            target = Path(tmp) / "dotfiles-claude.json"
+            target.write_text("{}")
+            (home / ".claude.json").symlink_to(target)
+            wire_plugins.preapprove_claude(home, workspace)
+            self.assertTrue((home / ".claude.json").is_symlink())
+            data = json.loads(target.read_text())
+            proj = data["projects"][str(workspace / "main")]
+            self.assertEqual(proj["enabledMcpjsonServers"], ["coding"])
+
+
+class TestWireCodexTomlMarkerEdges(QuietTestCase):
+    """Cases where the old grep guard passed but the sed strip silently ate
+    the file to EOF — now hard errors (block still open at end of file)."""
+
+    def test_stray_second_opener_after_closed_block_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            original = (
+                "# >>> dev-agent plugin MCP >>>\n"
+                "[mcp_servers.old]\n"
+                "# <<< dev-agent plugin MCP <<<\n"
+                "# >>> dev-agent plugin MCP >>>\n"
+                "user_config = 1\n"
+            )
+            config_path.write_text(original)
+            with self.assertRaises(wire_plugins.WireError) as cm:
+                wire_plugins.wire_codex_toml(config_path, {"p": {"command": "x"}})
+            self.assertIn("repair the markers", str(cm.exception))
+            self.assertEqual(config_path.read_text(), original)
+
+    def test_closer_above_opener_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            original = (
+                "# <<< dev-agent plugin MCP <<<\n"
+                "# >>> dev-agent plugin MCP >>>\n"
+                "user_config = 1\n"
+            )
+            config_path.write_text(original)
+            with self.assertRaises(wire_plugins.WireError):
+                wire_plugins.wire_codex_toml(config_path, {"p": {"command": "x"}})
+            self.assertEqual(config_path.read_text(), original)
+
+    def test_crlf_hand_content_preserved_byte_for_byte(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_bytes(b"keep = 1\r\nalso = 2\r\n")
+            wire_plugins.wire_codex_toml(config_path, {"p": {"command": "x"}})
+            content = config_path.read_bytes().decode()
+            self.assertTrue(content.startswith("keep = 1\r\nalso = 2\r\n"))
+            self.assertIn("[mcp_servers.p]", content)
+
+
+class TestBuildPayload(unittest.TestCase):
+    """Host-side payload assembly: strict [ = \"true\" ] boolean semantics and
+    the env-var contract with up.sh."""
+
+    def test_only_literal_true_enables_flags(self):
+        env = {"WIRE_CURSOR": "true", "WIRE_GEMINI": "yes", "WIRE_PI": "1",
+               "WIRE_CODEX": "True", "CAP_GATEWAY": "true", "CAP_PROXYMAN": "on",
+               "CAP_BROWSER": "", "CAP_OBSIDIAN": "false"}
+        payload = wire_plugins.build_payload(env)
+        self.assertEqual(payload["wire"],
+                         {"cursor": True, "gemini": False, "pi": False, "codex": False})
+        self.assertEqual(payload["capabilities"],
+                         {"gateway": True, "proxyman": False, "browser": False,
+                          "obsidian": False})
+
+    def test_missing_env_means_everything_off_and_empty(self):
+        payload = wire_plugins.build_payload({})
+        self.assertEqual(payload["wire"],
+                         {"cursor": False, "gemini": False, "pi": False, "codex": False})
+        self.assertEqual(payload["plugin_mcp_entries"], [])
+        self.assertEqual(payload["identities"], [])
+
+    def test_plugin_entries_parsed_per_line_blank_lines_ignored(self):
+        env = {"PLUGIN_MCP_ENTRIES": '{"serena": {"command": "bash"}}\n\n{"other": {"command": "x"}}\n'}
+        payload = wire_plugins.build_payload(env)
+        self.assertEqual(payload["plugin_mcp_entries"],
+                         [{"serena": {"command": "bash"}}, {"other": {"command": "x"}}])
+
+    def test_invalid_entry_line_raises(self):
+        with self.assertRaises(wire_plugins.WireError) as cm:
+            wire_plugins.build_payload({"PLUGIN_MCP_ENTRIES": "{broken\n"})
+        self.assertIn("invalid JSON", str(cm.exception))
+
+    def test_non_object_entry_line_raises(self):
+        with self.assertRaises(wire_plugins.WireError):
+            wire_plugins.build_payload({"PLUGIN_MCP_ENTRIES": "[1, 2]\n"})
+
+    def test_identities_pairs_parse_codex_keyless(self):
+        env = {"IDENTITY_AGENTS": "cursor-agent:IDENTITY_KEY_0 pi:IDENTITY_KEY_1 codex:"}
+        payload = wire_plugins.build_payload(env)
+        self.assertEqual(payload["identities"], [
+            {"agent": "cursor-agent", "key_env": "IDENTITY_KEY_0"},
+            {"agent": "pi", "key_env": "IDENTITY_KEY_1"},
+            {"agent": "codex", "key_env": ""},
+        ])
+
+    def test_round_trips_through_run(self):
+        """The payload build_payload emits is exactly what run() consumes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            workspace = Path(tmp) / "workspace"
+            (workspace / "main" / ".git").mkdir(parents=True)
+            env = {"WIRE_CURSOR": "true", "CAP_GATEWAY": "true",
+                   "PLUGIN_MCP_ENTRIES": '{"serena": {"command": "bash"}}\n',
+                   "IDENTITY_AGENTS": "cursor-agent:K0", "K0": "SECRET"}
+            payload = json.loads(json.dumps(wire_plugins.build_payload(env)))
+            with contextlib.redirect_stdout(io.StringIO()):
+                wire_plugins.run(payload, home, workspace, env)
+            cursor = json.loads((home / ".cursor" / "mcp.json").read_text())
+            self.assertIn("serena", cursor["mcpServers"])
+            self.assertEqual(
+                cursor["mcpServers"]["obsidian-annotated"]["headers"]["Authorization"],
+                "Bearer SECRET")
+            mcp = json.loads((workspace / "main" / ".mcp.json").read_text())
+            self.assertEqual(list(mcp["mcpServers"]), ["coding", "serena"])
 
 
 class TestMainSubprocess(unittest.TestCase):

@@ -7,8 +7,9 @@
 #           generated .mcp.json / dev.code-workspace / workspace CLAUDE.md
 # Survives: workspace volume (code), ~/dev-agent/artifacts/<name>/
 #
-# Requires: docker, yq (brew install yq / static binary on Linux); the config
-# wiring runs in-container via the baked-in src/wire_plugins.py (python3).
+# Requires: docker, yq (brew install yq / static binary on Linux), python3
+# (stdlib only — builds the wiring payload; the wiring itself runs
+# in-container via the baked-in src/wire_plugins.py).
 
 set -e
 
@@ -31,6 +32,7 @@ fi
 MANIFEST="$SCRIPT_DIR/containers/$NAME.yml"
 [ -f "$MANIFEST" ] || { echo "Error: no manifest at $MANIFEST (cp containers/TEMPLATE.yml)"; exit 1; }
 command -v yq >/dev/null || { echo "Error: yq required (brew install yq)"; exit 1; }
+command -v python3 >/dev/null || { echo "Error: python3 required (ships with Xcode CLT / most Linux)"; exit 1; }
 
 mkdir -p "$BASE_PATH"   # create the dev-agent home now that we're proceeding
 SHARED_PATH="$BASE_PATH/shared"
@@ -171,8 +173,8 @@ add_egress_domain() {
 # Fold each enabled plugin's egress into the firewall list, and collect its
 # mcp block as one-line JSON (host side only extracts — the merges into the
 # agent configs run in-container via wire_plugins.py, keeping the host
-# dependency at just yq). Entries accumulate newline-separated; the payload
-# assembly below joins them into a JSON array.
+# dependency at just yq). Entries accumulate newline-separated, one line of
+# JSON per plugin — the payload builder (--build-payload below) parses them.
 # Egress entries are validated as bare hostnames (same rule as
 # allow-egress.sh): junk would otherwise ride into dnsmasq.conf and
 # crash-loop the container at boot with only a generic firewall error.
@@ -418,31 +420,35 @@ echo "  ✓ global rules + skills linked (read-only; changes go via PR to the ru
 # All the config-file surgery — Claude's .mcp.json generation + ~/.claude.json
 # pre-approval, the cursor/gemini/pi identity + plugin merges with sidecar
 # stale-tracking, codex's managed TOML block — lives in src/wire_plugins.py
-# (baked into the image, unit-tested by tests/test_wire_plugins.py). It reads
-# ONE JSON payload on stdin. Identity keys never enter the payload: they
-# travel as docker-exec env vars the payload references by name.
+# (baked into the image, unit-tested by tests/test_wire_plugins.py). The SAME
+# file also builds the JSON payload (--build-payload, host python3), so the
+# schema and the strict boolean semantics live in one tested place; bash only
+# routes env vars. Identity keys never enter the payload: they travel as
+# docker-exec env vars the payload references by name — and only for
+# cursor-agent/gemini/pi (claude's key rides in its shim env; codex is a
+# pending warning and ships no key at all).
 HAS_OBSIDIAN=false
-for ref in $OBS_REFS; do [ "$(agent_for_ref "$ref")" = "claude" ] && HAS_OBSIDIAN=true; done
-
 IDENTITY_ENV=()
-IDENTITIES_JSON=""
+IDENTITY_AGENTS=""
 i=0
 for ref in $OBS_REFS; do
     a=$(agent_for_ref "$ref"); var="OBSIDIAN_KEY_${ref}"
-    IDENTITY_ENV+=(-e "IDENTITY_KEY_${i}=${!var}")
-    IDENTITIES_JSON="${IDENTITIES_JSON:+$IDENTITIES_JSON,}{\"agent\":\"$a\",\"key_env\":\"IDENTITY_KEY_$i\"}"
-    i=$((i + 1))
+    case "$a" in
+        claude) HAS_OBSIDIAN=true ;;
+        codex)  IDENTITY_AGENTS="${IDENTITY_AGENTS:+$IDENTITY_AGENTS }codex:" ;;
+        cursor-agent|gemini|pi)
+            IDENTITY_ENV+=(-e "IDENTITY_KEY_${i}=${!var}")
+            IDENTITY_AGENTS="${IDENTITY_AGENTS:+$IDENTITY_AGENTS }$a:IDENTITY_KEY_$i"
+            i=$((i + 1)) ;;
+    esac
 done
 
-# Safe to assemble with printf: the plugin entries are one-line JSON objects
-# (yq -o=json -I=0 above, newline-separated — paste joins them into a JSON
-# array), the booleans are yq true/false output, and agent names come from
-# the fixed agent_for_ref case list. Nothing free-form is interpolated.
-PLUGIN_ENTRIES_JSON=$(printf '%s' "$PLUGIN_MCP_ENTRIES" | paste -sd, -)
-PAYLOAD=$(printf '{"wire":{"cursor":%s,"gemini":%s,"pi":%s,"codex":%s},"capabilities":{"gateway":%s,"proxyman":%s,"browser":%s,"obsidian":%s},"plugin_mcp_entries":[%s],"identities":[%s]}' \
-    "$INSTALL_CURSOR" "$INSTALL_GEMINI" "$INSTALL_PI" "$INSTALL_CODEX" \
-    "$CAP_GATEWAY" "$CAP_PROXYMAN" "$CAP_BROWSER" "$HAS_OBSIDIAN" \
-    "$PLUGIN_ENTRIES_JSON" "$IDENTITIES_JSON")
+PAYLOAD=$(WIRE_CURSOR="$INSTALL_CURSOR" WIRE_GEMINI="$INSTALL_GEMINI" \
+    WIRE_PI="$INSTALL_PI" WIRE_CODEX="$INSTALL_CODEX" \
+    CAP_GATEWAY="$CAP_GATEWAY" CAP_PROXYMAN="$CAP_PROXYMAN" \
+    CAP_BROWSER="$CAP_BROWSER" CAP_OBSIDIAN="$HAS_OBSIDIAN" \
+    PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES" IDENTITY_AGENTS="$IDENTITY_AGENTS" \
+    python3 "$SCRIPT_DIR/src/wire_plugins.py" --build-payload)
 
 printf '%s' "$PAYLOAD" | docker exec -i -u coder "${IDENTITY_ENV[@]}" "dev-agent-$NAME" \
     python3 /usr/local/lib/dev-agent/wire_plugins.py

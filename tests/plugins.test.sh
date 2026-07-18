@@ -32,11 +32,6 @@ DOMAIN_RE='^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]
 
 echo "── syntax"
 bash -n up.sh   && pass "bash -n up.sh"   || fail "up.sh has syntax errors"
-if command -v python3 >/dev/null; then
-    python3 -m py_compile src/wire_plugins.py 2>/dev/null \
-        && pass "py_compile src/wire_plugins.py" \
-        || fail "src/wire_plugins.py has syntax errors"
-fi
 
 echo "── plugin files"
 found=0
@@ -135,16 +130,31 @@ add_egress_domain "api.foo.com"
     && pass "dedup is literal — api-foo.com does not swallow api.foo.com" \
     || fail "dedup treated the domain as a regex: '$EGRESS'"
 
-# The extraction contract wire_plugins.py consumes: each entry is ONE line
-# of valid JSON, and up.sh's paste-join turns them into a JSON array (the
-# exec payload shape). The merges themselves are unit-tested in Python.
+# The extraction contract the payload builder consumes: each entry is ONE
+# line of valid JSON. The merges themselves are unit-tested in Python.
 printf '%s' "$PLUGIN_MCP_ENTRIES" | head -1 | jq -e 'has("serena")' >/dev/null \
     && pass "extracted entry is one-line JSON with the serena server" \
     || fail "extraction contract broken: '$PLUGIN_MCP_ENTRIES'"
-JOINED=$(printf '%s' "$PLUGIN_MCP_ENTRIES" | paste -sd, -)
-printf '[%s]' "$JOINED" | jq -e 'length == 1' >/dev/null \
-    && pass "paste-join yields a valid JSON array (the exec payload shape)" \
-    || fail "payload assembly would produce invalid JSON: [$JOINED]"
+# End-to-end payload build: same invocation up.sh runs, same strict boolean
+# rule ([ = "true" ]), fed the real serena extraction. jq validates output.
+if command -v python3 >/dev/null; then
+    PAYLOAD=$(WIRE_CURSOR=true WIRE_GEMINI=yes WIRE_PI=false WIRE_CODEX=true \
+        CAP_GATEWAY=true CAP_PROXYMAN=1 CAP_BROWSER=false CAP_OBSIDIAN=true \
+        PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES" \
+        IDENTITY_AGENTS="cursor-agent:IDENTITY_KEY_0 codex:" \
+        python3 src/wire_plugins.py --build-payload) \
+        || fail "--build-payload exited non-zero"
+    printf '%s' "$PAYLOAD" | jq -e '
+        .wire == {cursor: true, gemini: false, pi: false, codex: true}
+        and .capabilities == {gateway: true, proxyman: false, browser: false, obsidian: true}
+        and (.plugin_mcp_entries[0] | has("serena"))' >/dev/null \
+        && pass "--build-payload: valid JSON, strict booleans (yes/1 stay off), serena entry carried" \
+        || fail "--build-payload output wrong: $PAYLOAD"
+    printf '%s' "$PAYLOAD" | jq -e '.identities == [
+        {agent: "cursor-agent", key_env: "IDENTITY_KEY_0"}, {agent: "codex", key_env: ""}]' >/dev/null \
+        && pass "--build-payload: identities parse (codex ships no key env)" \
+        || fail "--build-payload identities wrong: $PAYLOAD"
+fi
 
 echo "── host-side mcp entry validation (mirrors up.sh's yq rows + checks)"
 # Same row extraction up.sh runs per plugin: name, command type, extra keys
@@ -214,7 +224,7 @@ yq -o=json -I=0 '.mcp // {}'
 add_egress_domain
 (.mcp // {}) | to_entries[] | [.key, (.value.command | type)
 coding|proxyman|browser|obsidian-annotated
-paste -sd, -
+--build-payload
 python3 /usr/local/lib/dev-agent/wire_plugins.py
 DRIFT
 grep -qF -- "$DOMAIN_RE" up.sh \
@@ -239,11 +249,13 @@ grep -qF -- "COPY src/wire_plugins.py" Dockerfile \
 
 echo "── python unit tests (src/wire_plugins.py)"
 if command -v python3 >/dev/null; then
-    python3 -m unittest discover -s tests >/dev/null 2>&1 \
+    UNIT_OUT=$(python3 -m unittest discover -s tests 2>&1) \
         && pass "python3 -m unittest discover -s tests" \
-        || fail "unit tests failed (run: python3 -m unittest discover -s tests -v)"
+        || { fail "unit tests failed:"; printf '%s\n' "$UNIT_OUT" | tail -30; }
 else
-    echo "  (python3 not installed — skipped; the suite also runs in-container)"
+    # python3 is a hard up.sh requirement now, so absence is a failure here
+    # too — a green run must never mean "the wiring logic went untested".
+    fail "python3 not installed — wiring unit tests did NOT run (up.sh requires python3)"
 fi
 
 rm -f "$MANIFEST.scalar"
