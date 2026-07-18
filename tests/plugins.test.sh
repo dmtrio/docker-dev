@@ -225,6 +225,7 @@ add_egress_domain
 (.mcp // {}) | to_entries[] | [.key, (.value.command | type)
 coding|proxyman|browser|obsidian-annotated
 --build-payload
+"$PYTHON3" "$SCRIPT_DIR/src/wire_plugins.py"
 python3 /usr/local/lib/dev-agent/wire_plugins.py
 DRIFT
 grep -qF -- "$DOMAIN_RE" up.sh \
