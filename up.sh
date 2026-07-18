@@ -42,7 +42,7 @@ if [ -z "${PYTHON3:-}" ]; then
     done
 fi
 [ -n "${PYTHON3:-}" ] && "$PYTHON3" -c '' 2>/dev/null \
-    || { echo "Error: no working python3 (tried /usr/bin/python3, python3 — a broken pyenv/brew shim? Set PYTHON3=/path/to/python3)"; exit 1; }
+    || { echo "Error: no working python3 (tried /usr/bin/python3 and PATH — broken pyenv/brew shim? Install Xcode CLT on macOS, or set PYTHON3=/path/to/python3)"; exit 1; }
 
 mkdir -p "$BASE_PATH"   # create the dev-agent home now that we're proceeding
 SHARED_PATH="$BASE_PATH/shared"
