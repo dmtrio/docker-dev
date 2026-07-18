@@ -50,267 +50,35 @@ SECRETS_FILE="$BASE_PATH/secrets.env"
 [ -f "$SECRETS_FILE" ] || { touch "$SECRETS_FILE"; chmod 600 "$SECRETS_FILE"; }
 . "$SECRETS_FILE"
 
-Y() { yq -r "$1 // \"\"" "$MANIFEST"; }
-
-# ── Read manifest ─────────────────────────────────────────────────────────────
-REPO_URL=$(Y '.repo')
-FORGE=$(Y '.forge'); FORGE="${FORGE:-github}"
-GIT_USER_NAME=$(Y '.git.name'); GIT_USER_NAME="${GIT_USER_NAME:-$(git config --global user.name 2>/dev/null || true)}"
-GIT_USER_EMAIL=$(Y '.git.email'); GIT_USER_EMAIL="${GIT_USER_EMAIL:-$(git config --global user.email 2>/dev/null || true)}"
-MEM_LIMIT=$(Y '.memory'); MEM_LIMIT="${MEM_LIMIT:-2g}"
-
-case "$FORGE" in
-    github|gitea) ;; # informational; auth is per-container (GH_TOKEN or in-container login)
-    *) echo "Error: forge must be github or gitea"; exit 1 ;;
-esac
-
-has_tool() {
-    yq "(.tools // [\"claude\",\"codex\",\"pi\",\"gemini\",\"cursor\",\"aider\"]) | contains([\"$1\"])" "$MANIFEST"
-}
-INSTALL_CLAUDE=$(has_tool claude)
-INSTALL_CODEX=$(has_tool codex)
-INSTALL_PI=$(has_tool pi)
-INSTALL_GEMINI=$(has_tool gemini)
-INSTALL_CURSOR=$(has_tool cursor)
-INSTALL_AIDER=$(has_tool aider)
-
-CAP_GATEWAY=$(yq '.capabilities.gateway // false' "$MANIFEST")
-CAP_PROXYMAN=$(yq '.capabilities.proxyman // false' "$MANIFEST")
-CAP_BROWSER=$(yq '.capabilities.browser // false' "$MANIFEST")
-EGRESS=$(yq -r '(.capabilities.egress // []) | join(",")' "$MANIFEST")
-EGRESS_CIDRS=$(yq -r '(.capabilities.egress_cidrs // []) | join(",")' "$MANIFEST")
-
-# Plugins: baked-in local stdio MCP tools, one plugins/<name>.yml each (see
-# that dir). Binaries are baked into the image at build; listing a name here
-# only WIRES it for this container (mcp entry + egress). Validate every name
-# before touching anything: names become file paths, so restrict the charset,
-# and a listed plugin without a file is a manifest typo — hard-fail.
-# The tag check catches the natural scalar typo (plugins: serena), which
-# would otherwise die inside yq's join() with a cryptic error.
-if [ "$(yq '.plugins // [] | tag' "$MANIFEST")" != "!!seq" ]; then
-    echo "Error: manifest plugins: must be a list, e.g. plugins: [serena]"; exit 1
-fi
-PLUGINS=$(yq -r '(.plugins // []) | join(" ")' "$MANIFEST")
-PLUGIN_ERRORS=""
-for p in $PLUGINS; do
-    if ! printf '%s' "$p" | grep -qE '^[A-Za-z0-9_-]+$'; then
-        PLUGIN_ERRORS="$PLUGIN_ERRORS
-  plugin '$p': illegal characters (allowed: letters, digits, underscore, dash)"
-        continue
-    fi
-    if [ ! -f "$SCRIPT_DIR/plugins/$p.yml" ]; then
-        PLUGIN_ERRORS="$PLUGIN_ERRORS
-  plugin '$p': no plugin file at plugins/$p.yml"
-    fi
+# ── Read + validate manifest (src/manifest.py owns the rules) ────────────────
+# yq only converts YAML→JSON here; every validation rule, default, and derived
+# value lives in src/manifest.py (unit-tested table-driven — named errors
+# instead of cryptic yq failures). Secret VALUES stay out of the call: it
+# receives only the NAMES of the identity key vars that are set, plus
+# NTFY_URL/NTFY_TOPIC which the manifest may route into the container.
+SECRET_KEY_VARS=""
+for v in $(compgen -v | grep -E '^OBSIDIAN_(WATCH_)?KEY_' || true); do
+    if [ -n "${!v}" ]; then SECRET_KEY_VARS="${SECRET_KEY_VARS:+$SECRET_KEY_VARS }$v"; fi
 done
-if [ -n "$PLUGIN_ERRORS" ]; then
-    echo "Error: manifest plugins failed validation:$PLUGIN_ERRORS"
-    exit 1
-fi
+DERIVED=$(
+    {
+        yq -o=json -I=0 "$MANIFEST"
+        for f in "$SCRIPT_DIR/plugins"/*.yml; do
+            [ -e "$f" ] || continue
+            printf '%s\t' "$(basename "$f" .yml)"
+            yq -o=json -I=0 "$f"
+        done
+    } | SECRET_KEY_VARS="$SECRET_KEY_VARS" SECRETS_FILE="$SECRETS_FILE" \
+        GIT_NAME_DEFAULT="$(git config --global user.name 2>/dev/null || true)" \
+        GIT_EMAIL_DEFAULT="$(git config --global user.email 2>/dev/null || true)" \
+        NTFY_URL="${NTFY_URL:-}" NTFY_TOPIC="${NTFY_TOPIC:-}" \
+        "$PYTHON3" "$SCRIPT_DIR/src/manifest.py" --derive
+)
+eval "$DERIVED"
 
-# Optional ssh: section — same image/manifest everywhere; SSH is just a
-# deploy capability (homelab/VPS editor access via Remote-SSH).
-SSH_PORT=$(Y '.ssh.port')
-SSH_BIND=$(Y '.ssh.bind'); SSH_BIND="${SSH_BIND:-127.0.0.1}"
 COMPOSE_FILES="-f $SCRIPT_DIR/docker-compose.local.yml"
 [ -n "$SSH_PORT" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.ssh.yml"
-# (the missing-key case is a hard failure just before compose up, below)
-
-# Optional remote: section (RFC 04) — extends ssh: with a durable tmux
-# session, mosh (UDP, mobile-resilient), and idle notifications. All of it
-# rides the SSH login path, so remote.* without ssh.port is a manifest error.
-REMOTE_TMUX=$(yq '.remote.tmux // false' "$MANIFEST")
-REMOTE_MOSH=$(yq '.remote.mosh // false' "$MANIFEST")
-REMOTE_NOTIFY=$(Y '.remote.notify')
-if [ "$REMOTE_TMUX" = "true" ] || [ "$REMOTE_MOSH" = "true" ] || [ -n "$REMOTE_NOTIFY" ]; then
-    [ -n "$SSH_PORT" ] || { echo "Error: manifest has remote: but no ssh: section — remote access rides the SSH login path (add ssh.port)"; exit 1; }
-fi
-case "$REMOTE_NOTIFY" in
-    ""|ntfy) ;;
-    *) echo "Error: remote.notify must be 'ntfy' (got '$REMOTE_NOTIFY')"; exit 1 ;;
-esac
-# The whole notify chain lives inside the tmux server that only remote.tmux
-# auto-starts — notify without tmux would be a notifier that never fires.
-if [ -n "$REMOTE_NOTIFY" ] && [ "$REMOTE_TMUX" != "true" ]; then
-    echo "Error: remote.notify requires remote.tmux: true (the idle monitor runs inside the tmux session)"; exit 1
-fi
-
-# mosh gets its own overlay: the UDP range publish must not exist for
-# containers that didn't opt in (compose can't publish conditionally).
-# The range is per-manifest (remote.mosh_ports, START:END) because the host
-# publish is per-host-port — two mosh containers on one host need disjoint
-# ranges, exactly like ssh.port. up.sh is the single source: the overlay's
-# publish + env, the in-image wrapper, and the firewall all derive from it.
-MOSH_PORTS=""
-MOSH_PORTS_DASH=""
-if [ "$REMOTE_MOSH" = "true" ]; then
-    MOSH_PORTS=$(Y '.remote.mosh_ports'); MOSH_PORTS="${MOSH_PORTS:-60000:60010}"
-    if ! printf '%s' "$MOSH_PORTS" | grep -qE '^[0-9]{1,5}:[0-9]{1,5}$'; then
-        echo "Error: remote.mosh_ports must be START:END (got '$MOSH_PORTS')"; exit 1
-    fi
-    MOSH_LO="${MOSH_PORTS%%:*}"; MOSH_HI="${MOSH_PORTS##*:}"
-    if [ "$MOSH_LO" -gt "$MOSH_HI" ] || [ "$MOSH_HI" -gt 65535 ] || [ "$MOSH_LO" -lt 1024 ]; then
-        echo "Error: remote.mosh_ports '$MOSH_PORTS' out of range (need 1024 <= START <= END <= 65535)"; exit 1
-    fi
-    MOSH_PORTS_DASH="$MOSH_LO-$MOSH_HI"
-    COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.mosh.yml"
-fi
-OBS_REFS=$(yq -r '(.identities.obsidian // []) | join(" ")' "$MANIFEST")
-WATCH_REFS=$(yq -r '(.identities.watch // []) | join(" ")' "$MANIFEST")
-
-# Identity refs are EXPLICIT secret-name suffixes: a ref R reads
-# OBSIDIAN_KEY_R (or OBSIDIAN_WATCH_KEY_R) from secrets.env, and the agent
-# it belongs to is R's suffix: _claude, _codex, _pi, _gemini, _cursor_agent.
-agent_for_ref() {
-    case "$1" in
-        *_cursor_agent) echo "cursor-agent" ;;
-        *_claude)       echo "claude" ;;
-        *_codex)        echo "codex" ;;
-        *_pi)           echo "pi" ;;
-        *_gemini)       echo "gemini" ;;
-        *) echo "" ;;
-    esac
-}
-
-# Validate ALL identity refs before touching anything (hard fail on error).
-# Refs must be [A-Za-z0-9_] only — they become bash var-name suffixes, so a
-# dash (parsed as the ${var-default} operator) or $(...) would corrupt the
-# lookup or execute code. Values are read with indirect expansion, never eval.
-IDENTITY_ERRORS=""
-check_ref() {  # kind  secret_prefix  ref
-    local kind="$1" prefix="$2" ref="$3" var val
-    if ! printf '%s' "$ref" | grep -qE '^[A-Za-z0-9_]+$'; then
-        IDENTITY_ERRORS="$IDENTITY_ERRORS
-  $kind ref '$ref': illegal characters (allowed: letters, digits, underscore)"
-        return
-    fi
-    if [ -z "$(agent_for_ref "$ref")" ]; then
-        IDENTITY_ERRORS="$IDENTITY_ERRORS
-  $kind ref '$ref': suffix is not a known agent (_claude/_codex/_pi/_gemini/_cursor_agent)"
-        return
-    fi
-    var="${prefix}_${ref}"; val="${!var:-}"
-    if [ -z "$val" ]; then
-        IDENTITY_ERRORS="$IDENTITY_ERRORS
-  $kind ref '$ref': ${var} not found in $SECRETS_FILE"
-    fi
-    return 0  # never let a false test become the function's exit (set -e)
-}
-for ref in $OBS_REFS;   do check_ref obsidian OBSIDIAN_KEY "$ref"; done
-for ref in $WATCH_REFS; do check_ref watch OBSIDIAN_WATCH_KEY "$ref"; done
-if [ -n "$IDENTITY_ERRORS" ]; then
-    echo "Error: manifest identity references failed validation:$IDENTITY_ERRORS"
-    exit 1
-fi
-
-HOST_MCP_PORTS=""
-[ "$CAP_GATEWAY" = "true" ]  && HOST_MCP_PORTS="$HOST_MCP_PORTS,8811"
-[ "$CAP_PROXYMAN" = "true" ] && HOST_MCP_PORTS="$HOST_MCP_PORTS,8813"
-[ "$CAP_BROWSER" = "true" ]  && HOST_MCP_PORTS="$HOST_MCP_PORTS,8814"
-HOST_MCP_PORTS="${HOST_MCP_PORTS#,}"
-
-# Append a domain to EGRESS if not already present. -F: the domain is a
-# literal, not a regex — an unescaped dot would let lookalike entries
-# (api-foo.com vs api.foo.com) falsely satisfy the check and silently drop
-# the real domain from the firewall list.
-add_egress_domain() {
-    echo ",$EGRESS," | grep -qF ",$1," || EGRESS="${EGRESS:+$EGRESS,}$1"
-}
-
-# Obsidian identities imply the Annotated endpoint in the egress allowlist
-[ -n "$OBS_REFS" ] && add_egress_domain mcp-obsidian.dmetr.io
-
-# Fold each enabled plugin's egress into the firewall list, and collect its
-# mcp block as one-line JSON (host side only extracts — the merges into the
-# agent configs run in-container via wire_plugins.py, keeping the host
-# dependency at just yq). Entries accumulate newline-separated, one line of
-# JSON per plugin — the payload builder (--build-payload below) parses them.
-# Egress entries are validated as bare hostnames (same rule as
-# allow-egress.sh): junk would otherwise ride into dnsmasq.conf and
-# crash-loop the container at boot with only a generic firewall error.
-# set -f: the unquoted expansion must not glob a wildcard entry like
-# *.foo.com against the CWD — let it reach validation and fail by name.
-#
-# The mcp server entries are validated here too (still yq-only, and BEFORE
-# the image build so a bad manifest fails in seconds, not minutes):
-# - names must be [A-Za-z0-9_-]: they are wired as bare TOML keys into
-#   codex's config.toml, where a dot or space breaks the whole file;
-# - generated server names are reserved — the per-agent merges below are
-#   last-wins, so a plugin adopting e.g. obsidian-annotated would silently
-#   shadow a pre-approved or identity-bearing entry (including identities
-#   the Claude-path collision check never sees, like a cursor-only ref);
-# - entries carry ONLY command + args, so every agent — including codex's
-#   TOML rendering, which knows exactly those two fields — wires the exact
-#   same server (a field like env: silently working in four agents and
-#   dropped in the fifth is worse than an error here);
-# - a server name defined by two enabled plugins would last-wins-merge
-#   silently in the agent configs, so duplicates hard-fail (wire_plugins.py
-#   re-checks this in-container, but failing here is faster: BEFORE the
-#   image build, not minutes into it).
-PLUGIN_MCP_ENTRIES=""
-PLUGIN_MCP_NAMES=""
-set -f
-for p in $PLUGINS; do
-    for d in $(yq -r '(.egress // []) | join(" ")' "$SCRIPT_DIR/plugins/$p.yml"); do
-        if ! printf '%s' "$d" | grep -qE '^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]{0,61}[A-Za-z0-9]$'; then
-            echo "Error: plugin '$p' egress entry '$d' is not a bare hostname (no scheme, path, port, or wildcard — a domain already covers its subdomains)"
-            exit 1
-        fi
-        add_egress_domain "$d"
-    done
-    MCP_ROWS=$(yq -r '(.mcp // {}) | to_entries[] | [.key, (.value.command | type), ([.value | keys | .[] | select(. != "command" and . != "args")] | join(","))] | @tsv' "$SCRIPT_DIR/plugins/$p.yml")
-    while IFS=$'\t' read -r n ctype extra; do
-        [ -n "$n" ] || continue
-        if ! printf '%s' "$n" | grep -qE '^[A-Za-z0-9_-]+$'; then
-            echo "Error: plugin '$p' mcp server '$n': illegal characters in name (allowed: letters, digits, underscore, dash — it becomes a TOML/JSON key)"; exit 1
-        fi
-        case "$n" in coding|proxyman|browser|obsidian-annotated)
-            echo "Error: plugin '$p' mcp server '$n': name is reserved for generated servers"; exit 1 ;;
-        esac
-        if [ "$ctype" != "!!str" ]; then
-            echo "Error: plugin '$p' mcp server '$n': command must be a string (local stdio server)"; exit 1
-        fi
-        if [ -n "$extra" ]; then
-            echo "Error: plugin '$p' mcp server '$n': unsupported field(s): $extra (only command and args are wired, identically for every agent)"; exit 1
-        fi
-        if printf '%s' " $PLUGIN_MCP_NAMES " | grep -qF " $n "; then
-            echo "Error: multiple enabled plugins define the same MCP server name: $n"; exit 1
-        fi
-        PLUGIN_MCP_NAMES="${PLUGIN_MCP_NAMES:+$PLUGIN_MCP_NAMES }$n"
-    done <<< "$MCP_ROWS"
-    PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES$(yq -o=json -I=0 '.mcp // {}' "$SCRIPT_DIR/plugins/$p.yml")
-"
-done
-set +f
-
-# remote.notify: ntfy implies the ntfy host in the egress allowlist (RFC 04).
-# Hard-fail on a missing URL: an explicitly requested notifier that silently
-# does nothing is worse than a refused apply. -F: host is a literal, not a regex.
-CONTAINER_NTFY_URL=""; CONTAINER_NTFY_TOPIC=""
-if [ "$REMOTE_NOTIFY" = "ntfy" ]; then
-    [ -n "${NTFY_URL:-}" ] || { echo "Error: manifest has remote.notify: ntfy but NTFY_URL is missing from $SECRETS_FILE"; exit 1; }
-    # The value travels via /etc/environment, whose PAM parser truncates at
-    # '#' and strips quotes — refuse values that would be silently mangled.
-    case "$NTFY_URL" in
-        *'#'*|*'"'*|*"'"*) echo "Error: NTFY_URL must be a bare origin (no '#', quotes) — put the topic in NTFY_TOPIC"; exit 1 ;;
-    esac
-    # Host = URL minus scheme, path, userinfo, port (in that order — the
-    # path strip must precede the userinfo strip so an '@' in a path can't
-    # masquerade as userinfo).
-    NTFY_HOST=$(printf '%s' "$NTFY_URL" | sed -E 's|^[A-Za-z]+://||; s|/.*$||; s|^.*@||; s|:[0-9]+$||')
-    [ -n "$NTFY_HOST" ] || { echo "Error: cannot parse a host from NTFY_URL '$NTFY_URL'"; exit 1; }
-    if printf '%s' "$NTFY_HOST" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
-        # IP literal: the domain allowlist is dnsmasq-driven (IPs enter the
-        # ipset only via observed DNS answers), so an IP host must go through
-        # the CIDR path or the push is silently firewalled.
-        echo ",$EGRESS_CIDRS," | grep -qF ",$NTFY_HOST/32," \
-            || EGRESS_CIDRS="${EGRESS_CIDRS:+$EGRESS_CIDRS,}$NTFY_HOST/32"
-    else
-        add_egress_domain "$NTFY_HOST"
-    fi
-    CONTAINER_NTFY_URL="$NTFY_URL"
-    CONTAINER_NTFY_TOPIC="${NTFY_TOPIC:-}"
-fi
+[ "$REMOTE_MOSH" = "true" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.mosh.yml"
 
 # ── Compose derived credentials (keys/<name>/ is rebuilt from scratch) ───────
 KEYS_PATH="$BASE_PATH/keys/$NAME"
@@ -335,13 +103,14 @@ fi
 [ -n "${GH_TOKEN:-}" ] && echo "GH_TOKEN=$GH_TOKEN" >> "$KEYS_PATH/common.env"
 chmod 600 "$KEYS_PATH/common.env"
 
-# Identity refs were validated above — compose them (indirect expansion, no eval)
-for ref in $OBS_REFS; do
-    a=$(agent_for_ref "$ref"); var="OBSIDIAN_KEY_${ref}"
+# Identity refs were validated by manifest.py, which also derived the
+# ref:agent pairs — compose them (indirect expansion, no eval)
+for pair in $OBS_REF_AGENTS; do
+    ref="${pair%%:*}"; a="${pair#*:}"; var="OBSIDIAN_KEY_${ref}"
     echo "OBSIDIAN_ANNOTATED_KEY=${!var}" >> "$KEYS_PATH/$a.env"
 done
-for ref in $WATCH_REFS; do
-    a=$(agent_for_ref "$ref"); var="OBSIDIAN_WATCH_KEY_${ref}"
+for pair in $WATCH_REF_AGENTS; do
+    ref="${pair%%:*}"; a="${pair#*:}"; var="OBSIDIAN_WATCH_KEY_${ref}"
     echo "ANNOTATED_WATCH_KEY=${!var}" >> "$KEYS_PATH/$a.env"
 done
 for f in "$KEYS_PATH"/*.env; do [ -f "$f" ] && chmod 600 "$f"; done
@@ -540,8 +309,8 @@ HAS_OBSIDIAN=false
 IDENTITY_ENV=()
 IDENTITY_AGENTS=""
 i=0
-for ref in $OBS_REFS; do
-    a=$(agent_for_ref "$ref"); var="OBSIDIAN_KEY_${ref}"
+for pair in $OBS_REF_AGENTS; do
+    ref="${pair%%:*}"; a="${pair#*:}"; var="OBSIDIAN_KEY_${ref}"
     case "$a" in
         claude) HAS_OBSIDIAN=true ;;
         codex)  IDENTITY_AGENTS="${IDENTITY_AGENTS:+$IDENTITY_AGENTS }codex:" ;;

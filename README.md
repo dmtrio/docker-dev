@@ -179,12 +179,13 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
   egress), baked at image build, wired per container via the manifest's
   `plugins:` list
 - `rules/` — bundled default agent rules & skills (override via `RULES_PATH`)
-- `tests/` — host-runnable checks (`plugins.test.sh` — yq + jq for the
-  manifest/extraction checks, python3 for the wiring unit tests in
-  `test_wire_plugins.py`)
+- `tests/` — host-runnable checks (`plugins.test.sh` — yq + jq + python3;
+  the manifest validation and wiring logic are unit-tested in
+  `test_manifest.py` / `test_wire_plugins.py`)
 - `Dockerfile`, `docker-compose.local.yml`, `workspace.CLAUDE.md`,
-  `src/` (`entrypoint.sh`, `init-firewall.sh`, `wire_plugins.py` — the
-  agent-config writer `up.sh` execs after boot) — the image and its contracts
+  `src/` (`entrypoint.sh`, `init-firewall.sh`, `manifest.py` — host-side
+  manifest validation, `wire_plugins.py` — the agent-config writer `up.sh`
+  execs after boot) — the image and its contracts
 - `run-*.sh` — host-side capability services
 - `allow-egress.sh` — add egress domains to a running container (no restart)
 - `update-agent-keys.sh` — temporary per-agent key override; durable changes
