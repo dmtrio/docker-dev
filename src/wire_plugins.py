@@ -59,6 +59,12 @@ OBSIDIAN_URL = "https://mcp-obsidian.dmetr.io/mcp"
 # too, for fast failure BEFORE the image build; this check is the backstop.
 RESERVED_SERVER_NAMES = frozenset({"coding", "proxyman", "browser", "obsidian-annotated"})
 
+# Capability → host bridge port, in HOST_MCP_PORTS emission order. The ONLY
+# home of these numbers: the generated server URLs below and manifest.py's
+# HOST_MCP_PORTS (which imports this) both derive from it, so the firewall
+# grant and the URL an agent dials cannot disagree.
+CAPABILITY_PORTS = {"gateway": 8811, "proxyman": 8813, "browser": 8814}
+
 # The codex managed block. Detection matches on the PREFIX (like the old sed
 # ranges did), so a stale block written by an older up.sh with different
 # trailing text is still stripped.
@@ -168,19 +174,19 @@ def generate_claude_mcp(workspace, caps, plugins):
     if caps.get("gateway"):
         servers["coding"] = {
             "type": "http",
-            "url": "http://host.docker.internal:8811/mcp",
+            "url": f"http://host.docker.internal:{CAPABILITY_PORTS['gateway']}/mcp",
             "headers": {"Authorization": "Bearer ${MCP_GATEWAY_TOKEN}"},
         }
     if caps.get("proxyman"):
         servers["proxyman"] = {
             "type": "http",
-            "url": "http://host.docker.internal:8813/mcp",
+            "url": f"http://host.docker.internal:{CAPABILITY_PORTS['proxyman']}/mcp",
             "headers": {"X-API-Key": "${PROXYMAN_BRIDGE_KEY}"},
         }
     if caps.get("browser"):
         servers["browser"] = {
             "type": "http",
-            "url": "http://host.docker.internal:8814/mcp",
+            "url": f"http://host.docker.internal:{CAPABILITY_PORTS['browser']}/mcp",
             "headers": {"X-API-Key": "${RESEARCH_BROWSER_KEY}"},
         }
     if caps.get("obsidian"):
