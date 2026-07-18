@@ -32,7 +32,17 @@ fi
 MANIFEST="$SCRIPT_DIR/containers/$NAME.yml"
 [ -f "$MANIFEST" ] || { echo "Error: no manifest at $MANIFEST (cp containers/TEMPLATE.yml)"; exit 1; }
 command -v yq >/dev/null || { echo "Error: yq required (brew install yq)"; exit 1; }
-command -v python3 >/dev/null || { echo "Error: python3 required (ships with Xcode CLT / most Linux)"; exit 1; }
+# Host python3 (stdlib-only, builds the wiring payload): prefer the SYSTEM
+# interpreter over whatever shim leads $PATH — pyenv/homebrew pythons can be
+# present-but-broken (dyld: library not loaded) in ways `command -v` cannot
+# see, so each candidate must actually RUN. Override with PYTHON3=/path.
+if [ -z "${PYTHON3:-}" ]; then
+    for cand in /usr/bin/python3 python3; do
+        if "$cand" -c '' 2>/dev/null; then PYTHON3="$cand"; break; fi
+    done
+fi
+[ -n "${PYTHON3:-}" ] && "$PYTHON3" -c '' 2>/dev/null \
+    || { echo "Error: no working python3 (tried /usr/bin/python3, python3 — a broken pyenv/brew shim? Set PYTHON3=/path/to/python3)"; exit 1; }
 
 mkdir -p "$BASE_PATH"   # create the dev-agent home now that we're proceeding
 SHARED_PATH="$BASE_PATH/shared"
@@ -547,7 +557,7 @@ PAYLOAD=$(WIRE_CURSOR="$INSTALL_CURSOR" WIRE_GEMINI="$INSTALL_GEMINI" \
     CAP_GATEWAY="$CAP_GATEWAY" CAP_PROXYMAN="$CAP_PROXYMAN" \
     CAP_BROWSER="$CAP_BROWSER" CAP_OBSIDIAN="$HAS_OBSIDIAN" \
     PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES" IDENTITY_AGENTS="$IDENTITY_AGENTS" \
-    python3 "$SCRIPT_DIR/src/wire_plugins.py" --build-payload)
+    "$PYTHON3" "$SCRIPT_DIR/src/wire_plugins.py" --build-payload)
 
 printf '%s' "$PAYLOAD" | docker exec -i -u coder "${IDENTITY_ENV[@]}" "dev-agent-$NAME" \
     python3 /usr/local/lib/dev-agent/wire_plugins.py
