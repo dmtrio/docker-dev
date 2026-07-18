@@ -76,6 +76,38 @@ echo "── template"
     && pass "TEMPLATE.yml passes manifest.py --derive" \
     || fail "TEMPLATE.yml rejected by manifest.py"
 
+echo "── all shipped plugins as a set (cross-plugin rules)"
+# A manifest enabling EVERY shipped plugin: catches two shipped files
+# defining the same MCP server name or squatting a reserved one — rules the
+# per-file checks above can't see.
+ALL_PLUGINS=$(for f in plugins/*.yml; do [ -e "$f" ] && printf '"%s",' "$(basename "$f" .yml)"; done)
+ALL_DERIVED=$(
+    {
+        printf '{"plugins": [%s]}\n' "${ALL_PLUGINS%,}"
+        for f in plugins/*.yml; do
+            [ -e "$f" ] || continue
+            printf '%s\t' "$(basename "$f" .yml)"
+            yq -o=json -I=0 "$f"
+        done
+    } | python3 src/manifest.py --derive
+) \
+    && pass "all shipped plugins coexist (no cross-plugin dup/reserved names)" \
+    || fail "shipped plugins conflict as a set"
+# Shipped egress must reach the derived EGRESS (a renamed/mis-indented
+# egress: key would otherwise pass every check and firewall the plugin).
+EGRESS_ALL=$(eval "$ALL_DERIVED"; printf '%s' "$EGRESS")
+echo ",$EGRESS_ALL," | grep -qF ",blob.core.windows.net," \
+    && pass "serena's egress folds into derived EGRESS" \
+    || fail "serena egress missing from EGRESS: '$EGRESS_ALL'"
+# The eval interface is name-based and evals to empty on a rename — pin the
+# full emitted variable set. grep first: quoted multi-line values (e.g.
+# PLUGIN_MCP_ENTRIES) have continuation lines that are not assignments.
+EMITTED=$(printf '%s\n' "$ALL_DERIVED" | grep -oE '^[A-Z_]+=' | tr -d = | LC_ALL=C sort | tr '\n' ' ')
+EXPECTED="CAP_BROWSER CAP_GATEWAY CAP_PROXYMAN CONTAINER_NTFY_TOPIC CONTAINER_NTFY_URL EGRESS EGRESS_CIDRS FORGE GIT_USER_EMAIL GIT_USER_NAME HOST_MCP_PORTS INSTALL_AIDER INSTALL_CLAUDE INSTALL_CODEX INSTALL_CURSOR INSTALL_GEMINI INSTALL_PI MEM_LIMIT MOSH_PORTS MOSH_PORTS_DASH OBS_REFS OBS_REF_AGENTS PLUGINS PLUGIN_MCP_ENTRIES REMOTE_MOSH REMOTE_NOTIFY REMOTE_TMUX REPO_URL SSH_BIND SSH_PORT WATCH_REFS WATCH_REF_AGENTS "
+[ "$EMITTED" = "$EXPECTED" ] \
+    && pass "--derive emits exactly the variable set up.sh consumes" \
+    || fail "emitted variable set changed (update up.sh consumers + this pin): $EMITTED"
+
 echo "── derive → build-payload chain (both host halves, real serena file)"
 DERIVED=$(
     {
@@ -119,7 +151,18 @@ src/manifest.py" --derive
 --build-payload
 "$PYTHON3" "$SCRIPT_DIR/src/wire_plugins.py"
 python3 /usr/local/lib/dev-agent/wire_plugins.py
+^OBSIDIAN_(WATCH_)?KEY_
 DRIFT
+# The identity-key prefixes and hostname rule each live in two places by
+# design (bash glue ↔ module, manifest.py ↔ allow-egress.sh) — cross-pin
+# them so tightening one side can't silently strand the other.
+grep -qF "OBSIDIAN_KEY" src/manifest.py && grep -qF "OBSIDIAN_WATCH_KEY" src/manifest.py \
+    && pass "manifest.py uses the same identity-key prefixes up.sh's compgen scans" \
+    || fail "identity-key prefixes drifted between up.sh and manifest.py"
+DOMAIN_BODY='([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+'
+grep -qF -- "$DOMAIN_BODY" allow-egress.sh && grep -qF -- "$DOMAIN_BODY" src/manifest.py \
+    && pass "hostname rule matches between manifest.py and allow-egress.sh" \
+    || fail "hostname rule drifted between manifest.py and allow-egress.sh"
 
 echo "── dockerfile bake"
 for f in plugins/*.yml; do

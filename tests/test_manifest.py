@@ -8,10 +8,8 @@ quirks (`//` on false, contains() substring matching, agent-suffix case
 order) get dedicated pins so a future "cleanup" can't change them silently.
 """
 
-import contextlib
 import io
 import json
-import shlex
 import subprocess
 import sys
 import unittest
@@ -19,6 +17,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import manifest as m
+import wire_plugins
+
+MODULE = Path(__file__).parent.parent / "src" / "manifest.py"
 
 SERENA = {"install": "x", "mcp": {"serena": {"command": "bash", "args": ["-lc", "s"]}},
           "egress": ["blob.core.windows.net"]}
@@ -270,23 +271,106 @@ class TestRenderAndStdin(unittest.TestCase):
             m.read_stdin_docs(io.StringIO('{}\nno-tab-here\n'))
 
     def test_main_derive_end_to_end(self):
-        module = Path(__file__).parent.parent / "src" / "manifest.py"
         out = subprocess.run(
-            [sys.executable, str(module), "--derive"],
+            [sys.executable, str(MODULE), "--derive"],
             input='{"memory": "3g"}\n', capture_output=True, text=True,
             env={"SECRETS_FILE": "/s", "PATH": "/usr/bin:/bin"})
         self.assertEqual(out.returncode, 0)
         self.assertIn("MEM_LIMIT=3g\n", out.stdout)
 
     def test_main_error_goes_to_stderr_exit_1(self):
-        module = Path(__file__).parent.parent / "src" / "manifest.py"
         out = subprocess.run(
-            [sys.executable, str(module), "--derive"],
+            [sys.executable, str(MODULE), "--derive"],
             input='{"forge": "bad"}\n', capture_output=True, text=True,
             env={"PATH": "/usr/bin:/bin"})
         self.assertEqual(out.returncode, 1)
         self.assertEqual(out.stdout, "")
         self.assertIn("Error: forge must be github or gitea", out.stderr)
+
+
+class TestReviewFixes(unittest.TestCase):
+    """Pins for the code-review findings on this port."""
+
+    def test_trailing_newline_rejected_by_all_validators(self):
+        # Python's $ matches before a trailing \n; the port must use \Z.
+        files = {"p": {"egress": ["evil.com\n"]}}
+        with self.assertRaises(m.ManifestError):
+            derive({"plugins": ["p"]}, plugin_files=files)
+        files = {"p": {"mcp": {"srv\n": {"command": "x"}}}}
+        with self.assertRaises(m.ManifestError):
+            derive({"plugins": ["p"]}, plugin_files=files)
+        with self.assertRaises(m.ManifestError):
+            derive({"ssh": {"port": 22}, "remote": {"mosh": True, "mosh_ports": "2000:3000\n"}})
+
+    def test_null_entries_drop_from_word_lists(self):
+        # plugins: [serena,] parses as [serena, null]; old join+word-split
+        # dropped the null — a working manifest must keep working.
+        d = derive({"plugins": ["serena", None]})
+        self.assertEqual(d["PLUGINS"], "serena")
+        d = derive({"identities": {"obsidian": ["me_claude", None]}})
+        self.assertEqual(d["OBS_REFS"], "me_claude")
+
+    def test_null_entries_keep_slots_in_comma_lists(self):
+        # egress was comma-joined with no word split: empty slots survived.
+        d = derive({"capabilities": {"egress": ["a.com", None]}})
+        self.assertEqual(d["EGRESS"], "a.com,")
+
+    def test_wrong_typed_sections_are_named_errors(self):
+        for key in ("git", "capabilities", "ssh", "remote", "identities"):
+            with self.subTest(key):
+                with self.assertRaises(m.ManifestError) as cm:
+                    derive({key: [{"x": 1}]})
+                self.assertIn(f"manifest {key}: must be a map", str(cm.exception))
+
+    def test_sequence_root_plugin_file_is_named_error(self):
+        files = {"p": [{"mcp": {"srv": {"command": "x"}}}]}
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["p"]}, plugin_files=files)
+        self.assertIn("plugins/p.yml must be a YAML map", str(cm.exception))
+
+    def test_empty_plugin_file_is_valid_noop(self):
+        d = derive({"plugins": ["p"]}, plugin_files={"p": None})
+        self.assertEqual(d["PLUGIN_MCP_ENTRIES"], "{}\n")
+
+    def test_unreadable_plugin_errors_only_when_listed(self):
+        files = {"good": {"mcp": {}}, "broken": m.UNREADABLE}
+        d = derive({"plugins": ["good"]}, plugin_files=files)  # no error
+        self.assertEqual(d["PLUGINS"], "good")
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["broken"]}, plugin_files=files)
+        self.assertIn("plugins/broken.yml is not valid YAML", str(cm.exception))
+
+    def test_non_scalar_leaf_is_named_error(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"memory": ["2g"]})
+        self.assertIn("memory must be a single value", str(cm.exception))
+
+    def test_reserved_names_full_set_shared_with_wire_plugins(self):
+        self.assertEqual(set(wire_plugins.RESERVED_SERVER_NAMES),
+                         {"coding", "proxyman", "browser", "obsidian-annotated"})
+        for name in wire_plugins.RESERVED_SERVER_NAMES:
+            with self.subTest(name):
+                files = {"p": {"mcp": {name: {"command": "x"}}}}
+                with self.assertRaises(m.ManifestError) as cm:
+                    derive({"plugins": ["p"]}, plugin_files=files)
+                self.assertIn("reserved for generated servers", str(cm.exception))
+
+    def test_host_ports_and_urls_share_one_table(self):
+        for cap, port in wire_plugins.CAPABILITY_PORTS.items():
+            with self.subTest(cap):
+                d = derive({"capabilities": {cap: True}})
+                self.assertEqual(d["HOST_MCP_PORTS"], str(port))
+        # and the generated URLs use the same numbers
+        import inspect
+        src = inspect.getsource(wire_plugins.generate_claude_mcp)
+        self.assertIn("CAPABILITY_PORTS[", src)
+
+    def test_stdin_unreadable_sentinel_and_multidoc_hint(self):
+        man, files = m.read_stdin_docs(io.StringIO('{}\nbroken\t!\n'))
+        self.assertIs(files["broken"], m.UNREADABLE)
+        with self.assertRaises(m.ManifestError) as cm:
+            m.read_stdin_docs(io.StringIO('{}\n{"second": "doc"}\n'))
+        self.assertIn("stray '---'", str(cm.exception))
 
 
 if __name__ == "__main__":

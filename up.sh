@@ -8,8 +8,9 @@
 # Survives: workspace volume (code), ~/dev-agent/artifacts/<name>/
 #
 # Requires: docker, yq (brew install yq / static binary on Linux), python3
-# (stdlib only — builds the wiring payload; the wiring itself runs
-# in-container via the baked-in src/wire_plugins.py).
+# (stdlib only — owns ALL manifest validation/derivation via src/manifest.py
+# and builds the wiring payload; yq only converts YAML→JSON. The wiring
+# itself runs in-container via the baked-in src/wire_plugins.py).
 
 set -e
 
@@ -65,8 +66,12 @@ DERIVED=$(
         yq -o=json -I=0 "$MANIFEST"
         for f in "$SCRIPT_DIR/plugins"/*.yml; do
             [ -e "$f" ] || continue
-            printf '%s\t' "$(basename "$f" .yml)"
-            yq -o=json -I=0 "$f"
+            # '!' = unreadable. manifest.py errors on it ONLY when the
+            # manifest lists that plugin — a broken/WIP file in plugins/
+            # must not block bring-up of containers that never use it.
+            DOC=$(yq -o=json -I=0 "$f" 2>/dev/null) \
+                && [ "$(printf '%s\n' "$DOC" | wc -l)" -eq 1 ] || DOC='!'
+            printf '%s\t%s\n' "$(basename "$f" .yml)" "$DOC"
         done
     } | SECRET_KEY_VARS="$SECRET_KEY_VARS" SECRETS_FILE="$SECRETS_FILE" \
         GIT_NAME_DEFAULT="$(git config --global user.name 2>/dev/null || true)" \

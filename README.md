@@ -38,6 +38,10 @@ generates MCP configs. `./down.sh <name>` stops (code survives);
 
 - Docker Desktop (macOS) or Docker Engine (Linux)
 - `yq` (`brew install yq`)
+- `python3` (any 3.9+, stdlib only — present via Xcode CLT on macOS; on a
+  minimal Linux box, `apt install python3`). `up.sh` uses it for manifest
+  validation and the wiring payload, preferring `/usr/bin/python3` over
+  version-manager shims (`PYTHON3=/path` overrides).
 
 That's it — the repo is self-contained. `up.sh` keeps its runtime state
 (secrets, keys, artifacts) in a gitignored `./.dev-agent/` and uses the
@@ -201,7 +205,7 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
 
 Same system, same files, one addition. On any Linux box with Docker:
 
-1. Install `yq` (static binary) and clone this repo. The bundled `rules/`
+1. Install `yq` (static binary) and `python3`, and clone this repo. The bundled `rules/`
    and gitignored `./.dev-agent/` work as-is; set `DEV_AGENT_HOME` /
    `RULES_PATH` in `./.env` only if you want them elsewhere.
 2. Put your secrets in `secrets.env` (default `./.dev-agent/secrets.env`,

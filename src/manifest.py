@@ -6,7 +6,10 @@ up.sh feeds this file yq-converted JSON on stdin and evals the derived shell
 assignments it prints:
 
     input (stdin):  line 1: the manifest as JSON (yq -o=json -I=0)
-                    then one line per plugins/*.yml: "<name>\t<json>"
+                    then one line per plugins/*.yml: "<name>\t<json>" — or
+                    "<name>\t!" when yq could not parse that file (an error
+                    only if the manifest actually lists the plugin; an
+                    unlisted broken file must not block unrelated containers)
     input (env):    SECRET_KEY_VARS  — space-separated names of the non-empty
                                        OBSIDIAN_KEY_* / OBSIDIAN_WATCH_KEY_*
                                        vars currently defined (names only —
@@ -29,11 +32,24 @@ Behavioral fidelity notes (each is pinned by tests/test_manifest.py):
 - The old `tools | contains(["claude"])` had jq's SUBSTRING semantics for
   strings inside arrays (tools: [claude-code] enabled claude too). Ported
   as-is; tightening it is a deliberate future change, not a port surprise.
+- null entries inside word-split lists (plugins, identity refs) vanish, the
+  way the old `join(" ")` + word splitting dropped them — so a trailing
+  flow-style comma (`plugins: [serena,]`) keeps working. Comma-joined lists
+  (egress, egress_cidrs) keep their empty slots byte-for-byte.
 - agent_for_ref suffix matching preserves the old case-statement ORDER:
   _cursor_agent wins before _claude/_codex/_pi/_gemini can match.
 - Error ordering matches the old top-to-bottom flow: forge → plugins list →
   ssh/remote → mosh ports → identity refs (aggregated) → per-plugin egress +
   mcp entries (fail-fast) → ntfy. Messages are byte-identical to the bash.
+- Deliberate departures from the old bash, all loud-instead-of-silent: a
+  section written as the wrong YAML type (capabilities:/identities:/… as a
+  list) is a named error where yq used to emit a cryptic 'cannot index'
+  abort — or, worse, where a sequence-root plugin file validated as empty;
+  and a non-scalar leaf (memory: [2g]) is a named error instead of leaked
+  YAML/repr garbage.
+- Known cosmetic deviation: numeric scalars ride through yq's JSON encoder,
+  so `memory: 2.50` derives as "2.5" (the old `yq -r` printed the original
+  spelling). Quote the value in YAML if the exact spelling matters.
 """
 
 import json
@@ -42,17 +58,25 @@ import re
 import shlex
 import sys
 
-NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-REF_RE = re.compile(r"^[A-Za-z0-9_]+$")
+# Both modules live in src/ and run host-side here (wire_plugins.py is ALSO
+# baked into the image, where it never imports this file) — the reserved-name
+# set and the capability→port table have exactly one home.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wire_plugins import CAPABILITY_PORTS, RESERVED_SERVER_NAMES
+
+# \Z, not $: Python's $ also matches just before a trailing newline, which
+# would wave "evil.com\n" through into dnsmasq config (the old bash never saw
+# trailing newlines — word splitting ate them).
+NAME_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
+REF_RE = re.compile(r"^[A-Za-z0-9_]+\Z")
 DOMAIN_RE = re.compile(
     r"^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
-    r"[A-Za-z][A-Za-z0-9-]{0,61}[A-Za-z0-9]$"
+    r"[A-Za-z][A-Za-z0-9-]{0,61}[A-Za-z0-9]\Z"
 )
-IPV4_RE = re.compile(r"^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$")
-MOSH_PORTS_RE = re.compile(r"^[0-9]{1,5}:[0-9]{1,5}$")
+IPV4_RE = re.compile(r"^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\Z")
+MOSH_PORTS_RE = re.compile(r"^[0-9]{1,5}:[0-9]{1,5}\Z")
 
 DEFAULT_TOOLS = ["claude", "codex", "pi", "gemini", "cursor", "aider"]
-RESERVED_SERVER_NAMES = ("coding", "proxyman", "browser", "obsidian-annotated")
 
 # Suffix → agent, in the OLD case-statement order (first match wins).
 AGENT_SUFFIXES = (
@@ -65,6 +89,9 @@ AGENT_SUFFIXES = (
 
 OBSIDIAN_HOST = "mcp-obsidian.dmetr.io"
 
+# Marker for a plugins/*.yml that yq could not parse (see module docstring).
+UNREADABLE = object()
+
 
 class ManifestError(Exception):
     """Fatal validation error; main() prints 'Error: …' to stderr, exit 1."""
@@ -75,24 +102,71 @@ def _falsy(v):
     return v is None or v is False
 
 
-def _scalar(v, default=""):
-    """Render like `yq -r '.x // ""'`: falsy → default, bool → true/false,
-    everything else via str() (numbers lose no precision we care about)."""
+def _scalar(v, field, default=""):
+    """Render like `yq -r '.x // ""'`: falsy → default, bool → true/false.
+    A map/list leaf is a named error — the old yq spat multi-line garbage
+    into the variable; refusing loudly is the whole point of this module."""
     if _falsy(v):
         return default
     if v is True:
         return "true"
+    if isinstance(v, (dict, list)):
+        raise ManifestError(f"manifest {field} must be a single value, not a map/list")
     return str(v)
 
 
-def _raw_flag(v):
+def _raw_flag(v, field):
     """Render like `yq '.x // false'` (no -r): the raw scalar as yq prints
     it. Downstream only ever compares against the literal string 'true'."""
     if _falsy(v):
         return "false"
     if v is True:
         return "true"
+    if isinstance(v, (dict, list)):
+        raise ManifestError(f"manifest {field} must be a single value, not a map/list")
     return str(v)
+
+
+def _section(manifest, key):
+    """A top-level map section: absent/null → {}; any other non-map type is a
+    named error (the old yq aborted with a cryptic 'cannot index' here — and
+    silently-empty would be worse: a list-typo'd identities: must not bring
+    the container up unauthenticated)."""
+    v = manifest.get(key)
+    if v is None:
+        return {}
+    if not isinstance(v, dict):
+        raise ManifestError(f"manifest {key}: must be a map (got a {_yaml_type(v)})")
+    return v
+
+
+def _word_list(v, field):
+    """A list the old bash consumed via join(" ") + word splitting: falsy →
+    [], null entries vanish (they joined as empty words), scalars render like
+    yq -r. Non-list values are named errors."""
+    if _falsy(v):
+        return []
+    if not isinstance(v, list):
+        raise ManifestError(f"manifest {field} must be a list")
+    rendered = (_scalar(x, f"{field} entry") for x in v)
+    return [r for r in rendered if r != ""]
+
+
+def _comma_list(v, field):
+    """A list the old bash consumed via join(",") with NO word splitting:
+    empty slots from null entries survive byte-for-byte (they always have —
+    downstream tolerates them, and inventing a cleanup here would change the
+    emitted EGRESS string)."""
+    if _falsy(v):
+        return []
+    if not isinstance(v, list):
+        raise ManifestError(f"manifest {field} must be a list")
+    return [_scalar(x, f"{field} entry") for x in v]
+
+
+def _yaml_type(v):
+    return {list: "list", str: "string", int: "number", float: "number",
+            bool: "boolean"}.get(type(v), type(v).__name__)
 
 
 def agent_for_ref(ref):
@@ -116,23 +190,24 @@ class Derived(dict):
 
 def derive(manifest, plugin_files, env):
     """The whole old 'Read manifest' section of up.sh as one function.
-    manifest: parsed manifest JSON; plugin_files: {name: parsed plugin JSON}
-    for every file shipped under plugins/; env: os.environ-like mapping."""
+    manifest: parsed manifest JSON; plugin_files: {name: parsed plugin JSON,
+    or UNREADABLE for a file yq couldn't parse} for every file shipped under
+    plugins/; env: os.environ-like mapping."""
     if not isinstance(manifest, dict):
         raise ManifestError("manifest must be a YAML mapping")
     out = Derived()
     secrets_file = env.get("SECRETS_FILE", "secrets.env")
 
     # ── Scalars (old Y() reads + defaults) ──────────────────────────────
-    out["REPO_URL"] = _scalar(manifest.get("repo"))
-    forge = _scalar(manifest.get("forge")) or "github"
+    out["REPO_URL"] = _scalar(manifest.get("repo"), "repo")
+    forge = _scalar(manifest.get("forge"), "forge") or "github"
     if forge not in ("github", "gitea"):
         raise ManifestError("forge must be github or gitea")
     out["FORGE"] = forge
-    git = manifest.get("git") if isinstance(manifest.get("git"), dict) else {}
-    out["GIT_USER_NAME"] = _scalar(git.get("name")) or env.get("GIT_NAME_DEFAULT", "")
-    out["GIT_USER_EMAIL"] = _scalar(git.get("email")) or env.get("GIT_EMAIL_DEFAULT", "")
-    out["MEM_LIMIT"] = _scalar(manifest.get("memory")) or "2g"
+    git = _section(manifest, "git")
+    out["GIT_USER_NAME"] = _scalar(git.get("name"), "git.name") or env.get("GIT_NAME_DEFAULT", "")
+    out["GIT_USER_EMAIL"] = _scalar(git.get("email"), "git.email") or env.get("GIT_EMAIL_DEFAULT", "")
+    out["MEM_LIMIT"] = _scalar(manifest.get("memory"), "memory") or "2g"
 
     # ── Tools ───────────────────────────────────────────────────────────
     tools = manifest.get("tools")
@@ -146,29 +221,18 @@ def derive(manifest, plugin_files, env):
         out[var] = "true" if _tool_installed(tools, name) else "false"
 
     # ── Capabilities ────────────────────────────────────────────────────
-    caps = manifest.get("capabilities")
-    caps = caps if isinstance(caps, dict) else {}
-    out["CAP_GATEWAY"] = _raw_flag(caps.get("gateway"))
-    out["CAP_PROXYMAN"] = _raw_flag(caps.get("proxyman"))
-    out["CAP_BROWSER"] = _raw_flag(caps.get("browser"))
-    egress_list = caps.get("egress")
-    egress_list = [] if _falsy(egress_list) else egress_list
-    if not isinstance(egress_list, list):
-        raise ManifestError("manifest capabilities.egress must be a list")
-    egress = ",".join(_scalar(d) for d in egress_list)
-    cidr_list = caps.get("egress_cidrs")
-    cidr_list = [] if _falsy(cidr_list) else cidr_list
-    if not isinstance(cidr_list, list):
-        raise ManifestError("manifest capabilities.egress_cidrs must be a list")
-    egress_cidrs = ",".join(_scalar(c) for c in cidr_list)
+    caps = _section(manifest, "capabilities")
+    out["CAP_GATEWAY"] = _raw_flag(caps.get("gateway"), "capabilities.gateway")
+    out["CAP_PROXYMAN"] = _raw_flag(caps.get("proxyman"), "capabilities.proxyman")
+    out["CAP_BROWSER"] = _raw_flag(caps.get("browser"), "capabilities.browser")
+    egress_items = _comma_list(caps.get("egress"), "capabilities.egress")
+    cidr_items = _comma_list(caps.get("egress_cidrs"), "capabilities.egress_cidrs")
 
     # ── Plugins list (aggregated errors, old order) ─────────────────────
-    plugins = manifest.get("plugins")
-    if _falsy(plugins):
-        plugins = []
-    if not isinstance(plugins, list):
+    plugins_val = manifest.get("plugins")
+    if not _falsy(plugins_val) and not isinstance(plugins_val, list):
         raise ManifestError("manifest plugins: must be a list, e.g. plugins: [serena]")
-    plugins = [_scalar(p) for p in plugins]
+    plugins = _word_list(plugins_val, "plugins")
     plugin_errors = []
     for p in plugins:
         if not NAME_RE.match(p):
@@ -177,21 +241,23 @@ def derive(manifest, plugin_files, env):
             continue
         if p not in plugin_files:
             plugin_errors.append(f"  plugin '{p}': no plugin file at plugins/{p}.yml")
+        elif plugin_files[p] is UNREADABLE:
+            plugin_errors.append(f"  plugin '{p}': plugins/{p}.yml is not valid YAML (yq could not parse it)")
     if plugin_errors:
         raise ManifestError(
             "manifest plugins failed validation:\n" + "\n".join(plugin_errors))
     out["PLUGINS"] = " ".join(plugins)
 
     # ── ssh / remote (RFC 04) ───────────────────────────────────────────
-    ssh = manifest.get("ssh") if isinstance(manifest.get("ssh"), dict) else {}
-    ssh_port = _scalar(ssh.get("port"))
+    ssh = _section(manifest, "ssh")
+    ssh_port = _scalar(ssh.get("port"), "ssh.port")
     out["SSH_PORT"] = ssh_port
-    out["SSH_BIND"] = _scalar(ssh.get("bind")) or "127.0.0.1"
+    out["SSH_BIND"] = _scalar(ssh.get("bind"), "ssh.bind") or "127.0.0.1"
 
-    remote = manifest.get("remote") if isinstance(manifest.get("remote"), dict) else {}
-    remote_tmux = _raw_flag(remote.get("tmux"))
-    remote_mosh = _raw_flag(remote.get("mosh"))
-    remote_notify = _scalar(remote.get("notify"))
+    remote = _section(manifest, "remote")
+    remote_tmux = _raw_flag(remote.get("tmux"), "remote.tmux")
+    remote_mosh = _raw_flag(remote.get("mosh"), "remote.mosh")
+    remote_notify = _scalar(remote.get("notify"), "remote.notify")
     if (remote_tmux == "true" or remote_mosh == "true" or remote_notify) and not ssh_port:
         raise ManifestError(
             "manifest has remote: but no ssh: section — remote access rides the SSH login path (add ssh.port)")
@@ -207,7 +273,7 @@ def derive(manifest, plugin_files, env):
     mosh_ports = ""
     mosh_ports_dash = ""
     if remote_mosh == "true":
-        mosh_ports = _scalar(remote.get("mosh_ports")) or "60000:60010"
+        mosh_ports = _scalar(remote.get("mosh_ports"), "remote.mosh_ports") or "60000:60010"
         if not MOSH_PORTS_RE.match(mosh_ports):
             raise ManifestError(f"remote.mosh_ports must be START:END (got '{mosh_ports}')")
         lo, hi = (int(x) for x in mosh_ports.split(":"))
@@ -219,15 +285,9 @@ def derive(manifest, plugin_files, env):
     out["MOSH_PORTS_DASH"] = mosh_ports_dash
 
     # ── Identity refs (aggregated errors) ───────────────────────────────
-    ids = manifest.get("identities") if isinstance(manifest.get("identities"), dict) else {}
-    obs_refs = ids.get("obsidian")
-    obs_refs = [] if _falsy(obs_refs) else obs_refs
-    watch_refs = ids.get("watch")
-    watch_refs = [] if _falsy(watch_refs) else watch_refs
-    if not isinstance(obs_refs, list) or not isinstance(watch_refs, list):
-        raise ManifestError("manifest identities.obsidian / identities.watch must be lists")
-    obs_refs = [_scalar(r) for r in obs_refs]
-    watch_refs = [_scalar(r) for r in watch_refs]
+    ids = _section(manifest, "identities")
+    obs_refs = _word_list(ids.get("obsidian"), "identities.obsidian")
+    watch_refs = _word_list(ids.get("watch"), "identities.watch")
 
     secret_vars = set((env.get("SECRET_KEY_VARS") or "").split())
     identity_errors = []
@@ -259,19 +319,12 @@ def derive(manifest, plugin_files, env):
     out["OBS_REF_AGENTS"] = " ".join(f"{r}:{agent_for_ref(r)}" for r in obs_refs)
     out["WATCH_REF_AGENTS"] = " ".join(f"{r}:{agent_for_ref(r)}" for r in watch_refs)
 
-    # ── HOST_MCP_PORTS ──────────────────────────────────────────────────
-    ports = []
-    if out["CAP_GATEWAY"] == "true":
-        ports.append("8811")
-    if out["CAP_PROXYMAN"] == "true":
-        ports.append("8813")
-    if out["CAP_BROWSER"] == "true":
-        ports.append("8814")
-    out["HOST_MCP_PORTS"] = ",".join(ports)
+    # ── HOST_MCP_PORTS (from the shared capability table) ───────────────
+    out["HOST_MCP_PORTS"] = ",".join(
+        str(port) for cap, port in CAPABILITY_PORTS.items()
+        if out[f"CAP_{cap.upper()}"] == "true")
 
     # ── Egress fold: obsidian implies its endpoint; plugins add theirs ──
-    egress_items = [d for d in egress.split(",") if d] if egress else []
-
     def add_egress_domain(domain):
         if domain not in egress_items:
             egress_items.append(domain)
@@ -284,12 +337,12 @@ def derive(manifest, plugin_files, env):
     seen_server_names = set()
     for p in plugins:
         doc = plugin_files[p]
-        doc = doc if isinstance(doc, dict) else {}
-        p_egress = doc.get("egress")
-        p_egress = [] if _falsy(p_egress) else p_egress
-        if not isinstance(p_egress, list):
-            raise ManifestError(f"plugin '{p}' egress must be a list of domains")
-        for d in (_scalar(x) for x in p_egress):
+        if doc is None:
+            doc = {}  # empty yaml file → null → a valid no-op plugin
+        if not isinstance(doc, dict):
+            raise ManifestError(
+                f"plugin '{p}': plugins/{p}.yml must be a YAML map (got a {_yaml_type(doc)})")
+        for d in _comma_list(doc.get("egress"), f"plugin '{p}' egress"):
             if not DOMAIN_RE.match(d):
                 raise ManifestError(
                     f"plugin '{p}' egress entry '{d}' is not a bare hostname (no scheme, path, port, or wildcard — a domain already covers its subdomains)")
@@ -344,10 +397,8 @@ def derive(manifest, plugin_files, env):
         if IPV4_RE.match(host):
             # IP literal: the domain allowlist is dnsmasq-driven, so an IP
             # host must go through the CIDR path or the push is firewalled.
-            cidr_items = [c for c in egress_cidrs.split(",") if c] if egress_cidrs else []
             if f"{host}/32" not in cidr_items:
                 cidr_items.append(f"{host}/32")
-            egress_cidrs = ",".join(cidr_items)
         else:
             add_egress_domain(host)
         ntfy_topic = env.get("NTFY_TOPIC") or ""
@@ -355,19 +406,21 @@ def derive(manifest, plugin_files, env):
     out["CONTAINER_NTFY_TOPIC"] = ntfy_topic
 
     out["EGRESS"] = ",".join(egress_items)
-    out["EGRESS_CIDRS"] = egress_cidrs
+    out["EGRESS_CIDRS"] = ",".join(cidr_items)
     return out
 
 
 def read_stdin_docs(stream):
-    """Line 1: manifest JSON. Then '<name>\\t<json>' per plugins/*.yml file."""
+    """Line 1: manifest JSON. Then '<name>\\t<json>' per plugins/*.yml file,
+    with '!' in place of the JSON when yq could not parse the file."""
     first = stream.readline()
     if not first.strip():
         raise ManifestError("no manifest JSON on stdin")
     try:
         manifest = json.loads(first)
     except ValueError as e:
-        raise ManifestError(f"manifest is not valid JSON ({e})")
+        raise ManifestError(
+            f"manifest did not convert to valid JSON ({e}) — is the manifest YAML valid? (see any yq error above)")
     # yq maps an EMPTY yaml file to null; treat as empty manifest.
     if manifest is None:
         manifest = {}
@@ -377,7 +430,11 @@ def read_stdin_docs(stream):
             continue
         name, sep, doc = line.partition("\t")
         if not sep:
-            raise ManifestError(f"malformed plugin doc line (no tab): {line!r}")
+            raise ManifestError(
+                f"unexpected document after the manifest (a stray '---' making it multi-document?): {line.strip()[:120]}")
+        if doc.strip() == "!":
+            plugin_files[name] = UNREADABLE
+            continue
         try:
             plugin_files[name] = json.loads(doc)
         except ValueError as e:
