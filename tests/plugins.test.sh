@@ -158,6 +158,54 @@ J=$(echo "$J" | jq --argjson p "$PLUGINS_OBJ" ".mcpServers += \$p")
     && pass "merge is additive (existing servers preserved)" \
     || fail "merge clobbered existing mcpServers: $J"
 
+echo "── per-agent wiring simulation (reserved names, JSON merge, codex TOML)"
+# Reserved names: plugin servers are wired into every installed agent's
+# config with a last-wins merge, so generated-server names are rejected
+# outright (in-container check in up.sh; same expression here).
+RESV=$(printf '%s\n' '{"browser":{"command":"x"},"mine":{"command":"y"}}' \
+      | jq -rs '[.[] | keys[]] | map(select(. as $n | ["coding","proxyman","browser","obsidian-annotated"] | index($n))) | unique | join(", ")')
+[ "$RESV" = "browser" ] \
+    && pass "reserved generated-server name is detected" \
+    || fail "reserved-name check missed 'browser': got '$RESV'"
+RESV=$(printf "%s" "$PLUGIN_MCP_ENTRIES" \
+      | jq -rs '[.[] | keys[]] | map(select(. as $n | ["coding","proxyman","browser","obsidian-annotated"] | index($n))) | unique | join(", ")')
+[ -z "$RESV" ] \
+    && pass "shipped plugins pass the reserved-name check" \
+    || fail "reserved-name false positive: $RESV"
+
+# cursor/gemini/pi: same merge the in-container JSON_MERGE script runs —
+# additive into .mcpServers, existing entries (identity servers) preserved,
+# idempotent on rerun (last-wins refresh of the plugin's own entry).
+AGENT_CFG='{"mcpServers":{"obsidian-annotated":{"url":"https://x/mcp"}}}'
+P=$(printf "%s" "$PLUGIN_MCP_ENTRIES" | jq -s "add // {}")
+MERGED=$(echo "$AGENT_CFG" | jq --argjson p "$P" ".mcpServers = ((.mcpServers // {}) + \$p)")
+[ "$(echo "$MERGED" | jq -r '.mcpServers.serena.command')" = "bash" ] \
+    && pass "agent config merge carries serena" \
+    || fail "agent config merge missing serena: $MERGED"
+[ "$(echo "$MERGED" | jq -r '.mcpServers["obsidian-annotated"].url')" = "https://x/mcp" ] \
+    && pass "agent config merge preserves identity servers" \
+    || fail "agent config merge clobbered obsidian: $MERGED"
+MERGED2=$(echo "$MERGED" | jq --argjson p "$P" ".mcpServers = ((.mcpServers // {}) + \$p)")
+[ "$MERGED" = "$MERGED2" ] \
+    && pass "agent config merge is idempotent" \
+    || fail "agent config merge is not idempotent"
+
+# codex: stdio entries render to a [mcp_servers.*] TOML block; @json emits
+# TOML basic strings/arrays (JSON string+array escapes are a TOML subset).
+TOML=$(printf "%s" "$PLUGIN_MCP_ENTRIES" | jq -rs "add // {} | to_entries[] | \"[mcp_servers.\(.key)]\ncommand = \(.value.command | @json)\nargs = \(.value.args // [] | @json)\n\"")
+echo "$TOML" | grep -qF "[mcp_servers.serena]" \
+    && pass "codex TOML block has the serena table header" \
+    || fail "codex TOML missing table header: $TOML"
+echo "$TOML" | grep -qF 'command = "bash"' \
+    && pass "codex TOML renders the command" \
+    || fail "codex TOML command wrong: $TOML"
+# The managed-block replace: sed range-delete removes ONLY a previous block
+PREV=$(printf '%s\n' "keep = 1" "# >>> dev-agent plugin MCP (managed) >>>" "[mcp_servers.old]" "# <<< dev-agent plugin MCP <<<" "also_keep = 2")
+STRIPPED=$(echo "$PREV" | sed "/^# >>> dev-agent plugin MCP/,/^# <<< dev-agent plugin MCP/d")
+[ "$STRIPPED" = "$(printf 'keep = 1\nalso_keep = 2')" ] \
+    && pass "codex managed-block strip keeps surrounding config" \
+    || fail "codex managed-block strip broken: '$STRIPPED'"
+
 # Name validation must reject path-escaping input (the up.sh hard-fail).
 printf '%s' "../evil" | grep -qE "$NAME_RE" \
     && fail "charset check accepted '../evil'" \
@@ -189,6 +237,10 @@ jq -s "add // {}"
 [A-Za-z0-9_-]+$
 add_egress_domain
 group_by(.) | map(select(length > 1)
+map(select(. as \$n | [\"coding\",\"proxyman\",\"browser\",\"obsidian-annotated\"] | index(\$n))) | unique
+.mcpServers = ((.mcpServers // {}) + \$p)
+[mcp_servers.\(.key)]
+/^# >>> dev-agent plugin MCP/,/^# <<< dev-agent plugin MCP/d
 DRIFT
 grep -qF -- "$DOMAIN_RE" up.sh \
     && pass "up.sh still contains the domain validation regex" \

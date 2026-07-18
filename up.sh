@@ -374,6 +374,24 @@ fi
 echo "  ✓ global rules + skills linked (read-only; changes go via PR to the rules repo)"
 '
 
+# ── Reserve generated server names against plugins ───────────────────────────
+# Plugin MCP servers are wired into EVERY installed agent's config below with
+# a last-wins merge (so a rerun can refresh a plugin's own entry). That is
+# only safe if a plugin can never adopt a generated server's name — and with
+# it the pre-approval or identity key that name carries (e.g. a plugin named
+# obsidian-annotated shadowing a cursor-only identity that the Claude-path
+# collision check never sees) — so the generated names are reserved outright,
+# independent of which capabilities this container enables. Runs in-container
+# (jq lives in the image; the host dependency stays at just yq) and before
+# anything is written.
+if [ -n "$PLUGINS" ]; then
+    docker exec -u coder -e PLUGIN_MCP="$PLUGIN_MCP_ENTRIES" "dev-agent-$NAME" bash -c '
+RESERVED=$(printf "%s" "$PLUGIN_MCP" | jq -rs "[.[] | keys[]] | map(select(. as \$n | [\"coding\",\"proxyman\",\"browser\",\"obsidian-annotated\"] | index(\$n))) | unique | join(\", \")")
+if [ -n "$RESERVED" ]; then
+    echo "Error: plugin MCP server name(s) reserved for generated servers: $RESERVED"; exit 1
+fi'
+fi
+
 # ── Generate .mcp.json (Claude only; ${VAR} refs, values via shims) ──────────
 # Regenerated on every up UNLESS the repo brought its own (no marker file).
 HAS_OBSIDIAN=false
@@ -451,7 +469,9 @@ echo "  ✓ MCP servers pre-approved for claude ($(echo "$SERVERS" | jq -r "join
 # files, mode 600, never inside the repo, regenerated from secrets.env on
 # every up (rotation flows). pi needs the pi-mcp-adapter extension for its
 # file to take effect. codex is SKIPPED for now: ~/.codex is container-local
-# (per-container volume), but its remote-MCP config.toml format is unverified.
+# (per-container volume), but its remote-MCP config.toml format is unverified
+# (stdio plugin servers ARE wired into config.toml in the section below —
+# only this remote/HTTP identity form is pending).
 for ref in $OBS_REFS; do
     a=$(agent_for_ref "$ref")
     eval "v=\$OBSIDIAN_KEY_$ref"
@@ -485,6 +505,64 @@ echo "  ✓ pi MCP config written (NOTE: inert until pi-mcp-adapter extension is
                  "to codex processes as OBSIDIAN_ANNOTATED_KEY via its shim." ;;
     esac
 done
+
+# ── Wire plugin MCP servers into the other installed agents ──────────────────
+# Claude got the plugin entries via the generated .mcp.json above. The same
+# stdio blocks (command/args, no secrets — nothing to rotate) are valid
+# verbatim for cursor-agent, gemini, and pi, whose JSON configs merge
+# additively; plugin names are reserved against the generated servers above,
+# so the last-wins merge can only refresh a previous run's own entry. This
+# must run AFTER the identity loop: the cursor identity writer regenerates
+# its file from scratch each up. codex speaks TOML — yq cannot emit TOML
+# maps (v4.44), so its stdio entries are rendered by jq into a managed
+# marker block, replaced wholesale each run (hand edits outside the markers
+# survive). aider has no MCP support, so plugins don't reach it. Like
+# Claude, each agent launches stdio servers with cwd = where it was started,
+# so a plugin's "$PWD" project-rooting follows worktrees for every agent.
+if [ -n "$PLUGINS" ]; then
+    JSON_MERGE='
+mkdir -p "$(dirname "$F")"
+P=$(printf "%s" "$PLUGIN_MCP" | jq -s "add // {}")
+if [ "$(printf "%s" "$P" | jq "length")" = "0" ]; then exit 0; fi
+if [ -f "$F" ]; then
+    jq --argjson p "$P" ".mcpServers = ((.mcpServers // {}) + \$p)" "$F" > "$F.tmp" && mv "$F.tmp" "$F"
+else
+    jq -n --argjson p "$P" "{mcpServers: \$p}" > "$F"
+fi
+chmod 600 "$F"
+echo "  ✓ plugin MCP servers wired into $F"'
+    if [ "$INSTALL_CURSOR" = "true" ]; then
+        docker exec -u coder -e PLUGIN_MCP="$PLUGIN_MCP_ENTRIES" -e F=/home/coder/.cursor/mcp.json \
+            "dev-agent-$NAME" bash -c "$JSON_MERGE"
+    fi
+    if [ "$INSTALL_GEMINI" = "true" ]; then
+        docker exec -u coder -e PLUGIN_MCP="$PLUGIN_MCP_ENTRIES" -e F=/home/coder/.gemini/settings.json \
+            "dev-agent-$NAME" bash -c "$JSON_MERGE"
+    fi
+    if [ "$INSTALL_PI" = "true" ]; then
+        docker exec -u coder -e PLUGIN_MCP="$PLUGIN_MCP_ENTRIES" -e F=/home/coder/.pi/agent/mcp.json \
+            "dev-agent-$NAME" bash -c "$JSON_MERGE"
+    fi
+    if [ "$INSTALL_CODEX" = "true" ]; then
+        docker exec -u coder -e PLUGIN_MCP="$PLUGIN_MCP_ENTRIES" "dev-agent-$NAME" bash -c '
+F=/home/coder/.codex/config.toml
+BLOCK=$(printf "%s" "$PLUGIN_MCP" | jq -rs "add // {} | to_entries[] | \"[mcp_servers.\(.key)]\ncommand = \(.value.command | @json)\nargs = \(.value.args // [] | @json)\n\"")
+if [ -n "$BLOCK" ]; then
+    mkdir -p /home/coder/.codex
+    [ -f "$F" ] || : > "$F"
+    sed "/^# >>> dev-agent plugin MCP/,/^# <<< dev-agent plugin MCP/d" "$F" > "$F.tmp"
+    {
+        cat "$F.tmp"
+        echo "# >>> dev-agent plugin MCP (managed by up.sh; edits inside are overwritten) >>>"
+        printf "%s\n" "$BLOCK"
+        echo "# <<< dev-agent plugin MCP <<<"
+    } > "$F"
+    rm -f "$F.tmp"
+    chmod 600 "$F"
+    echo "  ✓ plugin MCP servers wired into $F (managed block)"
+fi'
+    fi
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

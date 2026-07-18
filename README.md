@@ -103,10 +103,10 @@ local stdio MCP server that runs entirely inside the container. One file —
 ```yaml
 install: |                     # runs at IMAGE BUILD (full network; offline after)
   uv tool install -p 3.13 serena-agent
-mcp:                           # merged into the generated .mcp.json (Claude)
-  serena:
-    command: serena
-    args: [start-mcp-server, --context, ide-assistant, --project, /workspace/main]
+mcp:                           # wired into every installed agent's MCP config
+  serena:                      # ("$PWD" so the server follows worktree sessions)
+    command: bash
+    args: [-c, 'exec serena start-mcp-server --context ide-assistant --project "$PWD"']
 egress:                        # added to this container's firewall allowlist
   - blob.core.windows.net
 ```
@@ -118,10 +118,12 @@ Two independent axes, deliberately split:
   behind the runtime firewall. Adding a plugin = dropping a file + a rebuild —
   no `Dockerfile` or `up.sh` edits.
 - **Wired (up, per container):** a manifest opts in with `plugins: [serena]`;
-  `up.sh` merges that plugin's `mcp` into the container's `.mcp.json`
-  (pre-approved, like the other generated servers) and its `egress` into the
-  firewall. Containers that don't list it carry the dormant binary and
-  nothing else.
+  `up.sh` merges that plugin's `mcp` into the configs of every installed
+  MCP-capable agent — claude's `.mcp.json` (pre-approved, like the other
+  generated servers), cursor-agent's / gemini's / pi's JSON configs, and a
+  managed `[mcp_servers.*]` block in codex's `config.toml` (aider has no MCP
+  support) — and its `egress` into the firewall. Containers that don't list
+  it carry the dormant binary and nothing else.
 
 First plugin: **serena** (`github.com/oraios/serena`) — semantic code
 retrieval + editing over LSP. It lazily downloads a language server per
