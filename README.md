@@ -122,8 +122,12 @@ Two independent axes, deliberately split:
   MCP-capable agent — claude's `.mcp.json` (pre-approved, like the other
   generated servers), cursor-agent's / gemini's / pi's JSON configs, and a
   managed `[mcp_servers.*]` block in codex's `config.toml` (aider has no MCP
-  support) — and its `egress` into the firewall. Containers that don't list
-  it carry the dormant binary and nothing else.
+  support; pi's config is inert until the pi-mcp-adapter extension is
+  installed) — and its `egress` into the firewall. De-listing a plugin also
+  removes its wiring on the next up. Containers that don't list it carry
+  the dormant binary and nothing else. One asymmetry: if the workspace repo
+  ships its own `.mcp.json`, claude keeps that file untouched (no plugin
+  entries) while the other agents' home-dir configs are still wired.
 
 First plugin: **serena** (`github.com/oraios/serena`) — semantic code
 retrieval + editing over LSP. It lazily downloads a language server per
