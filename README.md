@@ -118,8 +118,9 @@ Two independent axes, deliberately split:
   behind the runtime firewall. Adding a plugin = dropping a file + a rebuild —
   no `Dockerfile` or `up.sh` edits.
 - **Wired (up, per container):** a manifest opts in with `plugins: [serena]`;
-  `up.sh` merges that plugin's `mcp` into the configs of every installed
-  MCP-capable agent — claude's `.mcp.json` (pre-approved, like the other
+  `up.sh` hands that plugin's `mcp` to `src/wire_plugins.py` (baked into
+  the image; one `docker exec` with a JSON payload), which merges it into the
+  configs of every installed MCP-capable agent — claude's `.mcp.json` (pre-approved, like the other
   generated servers), cursor-agent's / gemini's / pi's JSON configs, and a
   managed `[mcp_servers.*]` block in codex's `config.toml` (aider has no MCP
   support; pi's config is inert until the pi-mcp-adapter extension is
@@ -178,9 +179,12 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
   egress), baked at image build, wired per container via the manifest's
   `plugins:` list
 - `rules/` — bundled default agent rules & skills (override via `RULES_PATH`)
-- `tests/` — host-runnable checks (`plugins.test.sh` — needs only yq + jq)
+- `tests/` — host-runnable checks (`plugins.test.sh` — yq + jq for the
+  manifest/extraction checks, python3 for the wiring unit tests in
+  `test_wire_plugins.py`)
 - `Dockerfile`, `docker-compose.local.yml`, `workspace.CLAUDE.md`,
-  `src/` (`entrypoint.sh`, `init-firewall.sh`) — the image and its contracts
+  `src/` (`entrypoint.sh`, `init-firewall.sh`, `wire_plugins.py` — the
+  agent-config writer `up.sh` execs after boot) — the image and its contracts
 - `run-*.sh` — host-side capability services
 - `allow-egress.sh` — add egress domains to a running container (no restart)
 - `update-agent-keys.sh` — temporary per-agent key override; durable changes
