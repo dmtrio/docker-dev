@@ -24,17 +24,17 @@ warn_missing() { echo "  ⚠ $1 not in secrets.env — $2 will not authenticate 
 # Reads GH_TOKEN and every SOURCE var from the environment (indirect expansion).
 compose_keys() {
     local keys_dir="$1" shim_agents="$2" plugin_env_secrets="$3" agent_secrets="$4"
-    local shared="" slot source hint agent a f
+    local shared="" slot src hint agent a f
 
     # Shared block: env-scoped plugin secrets + GH_TOKEN, built once. The
     # heredoc keeps the loop in this shell so the warns aren't lost to a pipe
     # subshell.
-    while IFS=$'\t' read -r slot source hint; do
+    while IFS=$'\t' read -r slot src hint; do
         [ -n "$slot" ] || continue
-        if [ -n "${!source:-}" ]; then
-            shared="${shared}${slot}=${!source}"$'\n'
+        if [ -n "${!src:-}" ]; then
+            shared="${shared}${slot}=${!src}"$'\n'
         else
-            warn_missing "$source" "$hint"
+            warn_missing "$src" "$hint"
         fi
     done <<EOF
 $plugin_env_secrets
@@ -50,9 +50,9 @@ EOF
 
     # Append each bound agent's own agent-scoped secrets (after the shared
     # block, so they win on a name collision).
-    while IFS=$'\t' read -r agent slot source; do
+    while IFS=$'\t' read -r agent slot src; do
         [ -n "$agent" ] || continue
-        echo "$slot=${!source}" >> "$keys_dir/$agent.env"
+        echo "$slot=${!src}" >> "$keys_dir/$agent.env"
     done <<EOF
 $agent_secrets
 EOF
