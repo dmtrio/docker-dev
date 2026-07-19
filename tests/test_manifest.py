@@ -41,8 +41,17 @@ BROWSER = {"host_port": 8814,
                        "hint": "browser (run run-research-browser.sh once)"}},
            "mcp": {"browser": {"url": "http://host.docker.internal:8814/mcp",
                                "headers": {"X-API-Key": "${RESEARCH_BROWSER_KEY}"}}}}
+# Agent-scoped plugins (Plugins v2 Phase 2). OBSIDIAN is a remote server with an
+# agent-scoped slot; WATCH is env-only (agent-scoped slot, no mcp server).
+OBSIDIAN = {"secrets": {"OBSIDIAN_ANNOTATED_KEY": "agent"},
+            "egress": ["mcp-obsidian.dmetr.io"],
+            "mcp": {"obsidian-annotated": {
+                "url": "https://mcp-obsidian.dmetr.io/mcp",
+                "headers": {"Authorization": "Bearer ${OBSIDIAN_ANNOTATED_KEY}"}}}}
+WATCH = {"secrets": {"ANNOTATED_WATCH_KEY": "agent"}}
 PLUGIN_FILES = {"serena": SERENA, "other": OTHER,
-                "gateway": GATEWAY, "proxyman": PROXYMAN, "browser": BROWSER}
+                "gateway": GATEWAY, "proxyman": PROXYMAN, "browser": BROWSER,
+                "obsidian-annotated": OBSIDIAN, "annotated-watch": WATCH}
 ENV = {"SECRET_KEY_VARS": "OBSIDIAN_KEY_me_claude OBSIDIAN_WATCH_KEY_w_pi",
        "SECRETS_FILE": "/sec/secrets.env"}
 
@@ -125,10 +134,8 @@ class TestErrorTable(unittest.TestCase):
     PLUGIN_MCP_CASES = [
         ("dot in server name", {"bad.name": {"command": "x"}},
          "plugin 'p' mcp server 'bad.name': illegal characters in name (allowed: letters, digits, underscore, dash — it becomes a TOML/JSON key)"),
-        # obsidian-annotated is the ONE remaining generated (reserved) name;
-        # coding/proxyman/browser are plugin data now, no longer reserved.
-        ("reserved name", {"obsidian-annotated": {"url": "http://x/mcp"}},
-         "plugin 'p' mcp server 'obsidian-annotated': name is reserved for generated servers"),
+        # No server names are reserved any more (Phase 2): obsidian-annotated is
+        # itself a plugin now, caught only by the cross-plugin duplicate check.
         ("non-string command", {"srv": {"command": 1}},
          "plugin 'p' mcp server 'srv': command must be a string (local stdio server)"),
         ("local extra field", {"srv": {"command": "x", "env": {"A": "b"}}},
@@ -234,10 +241,14 @@ class TestDerivedValues(unittest.TestCase):
         self.assertEqual(d["HOST_MCP_PORTS"], "8811,8814")
         self.assertEqual(derive({"plugins": ["serena"]})["HOST_MCP_PORTS"], "")
 
-    def test_obsidian_identity_implies_egress(self):
+    def test_obsidian_identity_sugar_folds_egress_and_binds(self):
+        # identities: sugar enables the obsidian-annotated plugin (whose egress
+        # folds in) and produces an agent_secrets binding for the ref's agent.
         d = derive({"identities": {"obsidian": ["me_claude"]}})
         self.assertEqual(d["EGRESS"], "mcp-obsidian.dmetr.io")
-        self.assertEqual(d["OBS_REF_AGENTS"], "me_claude:claude")
+        self.assertEqual(d["AGENT_SECRETS"],
+                         "claude\tOBSIDIAN_ANNOTATED_KEY\tOBSIDIAN_KEY_me_claude\n")
+        self.assertIn("obsidian-annotated", d["PLUGINS"])
 
     def test_plugin_egress_folds_with_literal_dedup(self):
         files = {"p": {"egress": ["api.foo.com"]}}
@@ -347,8 +358,11 @@ class TestReviewFixes(unittest.TestCase):
         # dropped the null — a working manifest must keep working.
         d = derive({"plugins": ["serena", None]})
         self.assertEqual(d["PLUGINS"], "serena")
+        # identity refs run through the same _word_list; a trailing-comma null
+        # vanishes, leaving a single binding.
         d = derive({"identities": {"obsidian": ["me_claude", None]}})
-        self.assertEqual(d["OBS_REFS"], "me_claude")
+        self.assertEqual(d["AGENT_SECRETS"],
+                         "claude\tOBSIDIAN_ANNOTATED_KEY\tOBSIDIAN_KEY_me_claude\n")
 
     def test_null_entries_keep_slots_in_comma_lists(self):
         # egress was comma-joined with no word split: empty slots survived.
@@ -385,22 +399,12 @@ class TestReviewFixes(unittest.TestCase):
             derive({"memory": ["2g"]})
         self.assertIn("memory must be a single value", str(cm.exception))
 
-    def test_reserved_names_full_set_shared_with_wire_plugins(self):
-        # Only obsidian-annotated is still generated; gateway/proxyman/browser's
-        # server names (coding/proxyman/browser) are plugin data now.
-        self.assertEqual(set(wire_plugins.RESERVED_SERVER_NAMES),
-                         {"obsidian-annotated"})
-        for name in wire_plugins.RESERVED_SERVER_NAMES:
-            with self.subTest(name):
-                files = {"p": {"install": "x", "mcp": {name: {"command": "x"}}}}
-                with self.assertRaises(m.ManifestError) as cm:
-                    derive({"plugins": ["p"]}, plugin_files=files)
-                self.assertIn("reserved for generated servers", str(cm.exception))
-
-    def test_former_capability_server_names_are_no_longer_reserved(self):
-        # A plugin may now legitimately define coding/proxyman/browser (the
-        # shipped remote plugins do exactly that).
-        for name in ("coding", "proxyman", "browser"):
+    def test_no_reserved_server_names(self):
+        # As of Phase 2 nothing is reserved — every MCP server comes from a
+        # plugin file. A plugin may legitimately define coding/proxyman/browser
+        # AND obsidian-annotated; only cross-plugin duplicates are rejected.
+        self.assertFalse(hasattr(wire_plugins, "RESERVED_SERVER_NAMES"))
+        for name in ("coding", "proxyman", "browser", "obsidian-annotated"):
             with self.subTest(name):
                 files = {"p": {"host_port": 9999,
                                "mcp": {name: {"url": "http://host.docker.internal:9999/mcp"}}}}
@@ -511,6 +515,103 @@ class TestPluginsV2Phase1(unittest.TestCase):
     def test_capabilities_sugar_appends_after_explicit(self):
         d = derive({"plugins": ["serena"], "capabilities": {"browser": True, "gateway": True}})
         self.assertEqual(d["PLUGINS"], "serena gateway browser")  # explicit, then sugar order
+
+
+class TestPluginsV2Phase2(unittest.TestCase):
+    """Agent-scoped secrets: agent_secrets bindings, the identities: sugar,
+    agent-server routing, and the derived AGENT_* variables."""
+
+    ENV = {"SECRET_KEY_VARS": "OBSIDIAN_KEY_me_claude OBSIDIAN_KEY_x_cursor_agent "
+                              "OBSIDIAN_WATCH_KEY_me_claude PLAYWRIGHT_KEY",
+           "SECRETS_FILE": "/sec/secrets.env"}
+
+    def _d(self, man):
+        return m.derive(man, PLUGIN_FILES, self.ENV)
+
+    def test_explicit_agent_secrets_full_derivation(self):
+        d = self._d({"plugins": ["obsidian-annotated", "annotated-watch"],
+                     "agent_secrets": [
+                         {"agent": "claude", "slot": "OBSIDIAN_ANNOTATED_KEY", "secret": "OBSIDIAN_KEY_me_claude"},
+                         {"agent": "claude", "slot": "ANNOTATED_WATCH_KEY", "secret": "OBSIDIAN_WATCH_KEY_me_claude"}]})
+        self.assertEqual(
+            d["AGENT_SECRETS"],
+            "claude\tOBSIDIAN_ANNOTATED_KEY\tOBSIDIAN_KEY_me_claude\n"
+            "claude\tANNOTATED_WATCH_KEY\tOBSIDIAN_WATCH_KEY_me_claude\n")
+        # obsidian has a server (agent-scoped); watch does not
+        self.assertEqual(d["AGENT_SERVER_SLOTS"], "OBSIDIAN_ANNOTATED_KEY")
+        servers = json.loads(d["AGENT_SERVERS_JSON"])
+        self.assertEqual(servers["OBSIDIAN_ANNOTATED_KEY"]["name"], "obsidian-annotated")
+        self.assertEqual(servers["OBSIDIAN_ANNOTATED_KEY"]["spec"], OBSIDIAN["mcp"]["obsidian-annotated"])
+        # agent-scoped plugins never land in the uniform plugin_mcp_entries
+        self.assertEqual(d["PLUGIN_MCP_ENTRIES"], "")
+        self.assertEqual(d["EGRESS"], "mcp-obsidian.dmetr.io")
+
+    def test_unknown_agent_rejected(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"plugins": ["obsidian-annotated"],
+                     "agent_secrets": [{"agent": "nope", "slot": "OBSIDIAN_ANNOTATED_KEY", "secret": "OBSIDIAN_KEY_me_claude"}]})
+        self.assertIn("unknown agent 'nope'", str(cm.exception))
+
+    def test_slot_not_agent_scoped_rejected(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"plugins": ["gateway"],
+                     "agent_secrets": [{"agent": "claude", "slot": "MCP_GATEWAY_TOKEN", "secret": "OBSIDIAN_KEY_me_claude"}]})
+        self.assertIn("not an agent-scoped secret", str(cm.exception))
+
+    def test_agent_secret_source_missing(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"plugins": ["obsidian-annotated"],
+                     "agent_secrets": [{"agent": "claude", "slot": "OBSIDIAN_ANNOTATED_KEY", "secret": "OBSIDIAN_KEY_gone"}]})
+        msg = str(cm.exception)
+        self.assertIn("not found in /sec/secrets.env", msg)
+        # names the source-var scope so a set-but-unscanned var isn't blamed as unset
+        self.assertIn("OBSIDIAN_KEY_* / OBSIDIAN_WATCH_KEY_*", msg)
+
+    def test_enabled_agent_plugin_without_binding_warns_inert(self):
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            d = self._d({"plugins": ["obsidian-annotated"]})  # no agent_secrets
+        self.assertEqual(d["AGENT_SECRETS"], "")
+        self.assertIn("inert (wired for no agent)", err.getvalue())
+        self.assertIn("OBSIDIAN_ANNOTATED_KEY", err.getvalue())
+
+    def test_duplicate_agent_slot_binding_rejected(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"plugins": ["obsidian-annotated"],
+                     "agent_secrets": [
+                         {"agent": "claude", "slot": "OBSIDIAN_ANNOTATED_KEY", "secret": "OBSIDIAN_KEY_me_claude"},
+                         {"agent": "claude", "slot": "OBSIDIAN_ANNOTATED_KEY", "secret": "OBSIDIAN_KEY_x_cursor_agent"}]})
+        self.assertIn("bound to slot 'OBSIDIAN_ANNOTATED_KEY' more than once", str(cm.exception))
+
+    def test_agent_scoped_plugin_multiple_slots_rejected(self):
+        files = dict(PLUGIN_FILES, bad={"secrets": {"A": "agent", "B": "agent"},
+                                        "mcp": {"s": {"url": "http://h/mcp"}}})
+        with self.assertRaises(m.ManifestError) as cm:
+            m.derive({"plugins": ["bad"]}, files, self.ENV)
+        self.assertIn("only one agent secret slot", str(cm.exception))
+
+    def test_agent_scoped_plugin_multiple_servers_rejected(self):
+        files = dict(PLUGIN_FILES, bad={"secrets": {"A": "agent"},
+                                        "mcp": {"s1": {"url": "http://h/1"}, "s2": {"url": "http://h/2"}}})
+        with self.assertRaises(m.ManifestError) as cm:
+            m.derive({"plugins": ["bad"]}, files, self.ENV)
+        self.assertIn("at most one mcp server", str(cm.exception))
+
+    def test_agent_scoped_local_server_rejected(self):
+        files = dict(PLUGIN_FILES, bad={"install": "x", "secrets": {"A": "agent"},
+                                        "mcp": {"s": {"command": "bash"}}})
+        with self.assertRaises(m.ManifestError) as cm:
+            m.derive({"plugins": ["bad"]}, files, self.ENV)
+        self.assertIn("must be remote (url:)", str(cm.exception))
+
+    def test_watch_is_env_only_no_server(self):
+        d = self._d({"plugins": ["annotated-watch"],
+                     "agent_secrets": [{"agent": "pi", "slot": "ANNOTATED_WATCH_KEY", "secret": "OBSIDIAN_WATCH_KEY_me_claude"}]})
+        self.assertEqual(d["AGENT_SERVER_SLOTS"], "")        # no server
+        self.assertEqual(d["AGENT_SERVERS_JSON"], "{}")
+        self.assertEqual(d["AGENT_SECRETS"],
+                         "pi\tANNOTATED_WATCH_KEY\tOBSIDIAN_WATCH_KEY_me_claude\n")
 
 
 if __name__ == "__main__":

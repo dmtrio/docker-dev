@@ -19,24 +19,30 @@ Payload:
 
     {
       "wire":         {"cursor": bool, "gemini": bool, "pi": bool, "codex": bool},
-      "capabilities": {"obsidian": bool},
-      "plugin_mcp_entries": [{"<name>": <local or remote spec>}, ...],
-      "identities":   [{"agent": "cursor-agent", "key_env": "IDENTITY_KEY_0"}, ...]
+      "plugin_mcp_entries": [{"<name>": <local or env-scoped-remote spec>}, ...],
+      "agent_servers": [
+        {"name": "obsidian-annotated", "slot": "OBSIDIAN_ANNOTATED_KEY",
+         "spec": {"url": ..., "headers": {...${SLOT}...}},
+         "claude": bool,                                   # → .mcp.json ref
+         "literal": [{"agent": "cursor-agent", "key_env": "IDENTITY_KEY_0"}],
+         "warn":    ["codex"]}
+      ]
     }
 
-- plugin_mcp_entries carries one object per enabled plugin (host-side
+- plugin_mcp_entries carries one object per NON-agent-scoped plugin (host-side
   manifest.py extracts them from plugins/<name>.yml). A spec is LOCAL
-  ({command, args} — stdio, wired into every agent) or REMOTE ({url, headers}
-  — http, wired into Claude's .mcp.json only in Phase 1). Cross-plugin
-  duplicate server names hard-fail here as well as host-side: both merges are
-  last-wins, so a collision must never silently replace an entry.
-- capabilities carries only obsidian now (agent-scoped, migrates to a plugin in
-  Phase 2). gateway/proxyman/browser were capability flags before Phase 1 and
-  are plugin data now — they arrive via plugin_mcp_entries like any plugin.
-- Identity keys never ride in the payload: each identities[] element names an
-  environment variable (set on the docker exec) that holds the key, so the
-  payload itself is secret-free. Only cursor-agent/gemini/pi keys are shipped
-  at all — claude's rides in its shim env, codex's is pending (warning only).
+  ({command, args} — stdio, wired into every agent) or env-scoped REMOTE
+  ({url, headers} — http, wired into Claude's .mcp.json only). Cross-plugin
+  duplicate server names hard-fail here as well as host-side (last-wins merge).
+- agent_servers carries the AGENT-SCOPED remote plugins (obsidian etc.): each
+  bound agent presents its own key. claude gets the ${SLOT} ref in .mcp.json
+  (shim expands it); cursor/gemini/pi get the literal key baked in; codex gets a
+  warning. Env-only agent-scoped slots (watch keys — no server) never reach the
+  payload; up.sh delivers them straight into the agent's env file.
+- Keys never ride in the payload: each literal[] element names an environment
+  variable (set on the docker exec) that holds the key, so the payload is
+  secret-free. Only cursor-agent/gemini/pi literal keys are shipped at all —
+  claude's rides in its shim env, codex's is pending (warning only).
 - Version skew between the two halves cannot happen in the up.sh flow: the
   payload is built from the repo checkout and the consumer is baked from the
   same checkout by the `docker compose up --build` that just ran.
@@ -54,16 +60,10 @@ import os
 import sys
 from pathlib import Path
 
-OBSIDIAN_URL = "https://mcp-obsidian.dmetr.io/mcp"
-
-# Names of servers up.sh still GENERATES into Claude's .mcp.json (as opposed to
-# taking from a plugin file). A plugin adopting one would silently
-# last-wins-shadow the identity-bearing entry, so it is reserved. Only
-# obsidian-annotated remains generated; gateway/proxyman/browser became plugin
-# data in Plugins v2 Phase 1 (their server names — coding/proxyman/browser — are
-# now defined by plugins/*.yml and validated by the generic collision check).
-# obsidian-annotated retires from this set in Phase 2.
-RESERVED_SERVER_NAMES = frozenset({"obsidian-annotated"})
+# No server names are reserved any more: as of Plugins v2 Phase 2, EVERY MCP
+# server up.sh wires comes from a plugin file (obsidian-annotated is now
+# plugins/obsidian-annotated.yml, an agent-scoped remote plugin). Cross-plugin
+# name collisions are caught by the generic duplicate check below and host-side.
 
 # The codex managed block. Detection matches on the PREFIX (like the old sed
 # ranges did), so a stale block written by an older up.sh with different
@@ -128,12 +128,6 @@ def merge_plugin_entries(entries):
             "multiple enabled plugins define the same MCP server name(s): "
             + ", ".join(sorted(dups))
         )
-    reserved = sorted(n for n in merged if n in RESERVED_SERVER_NAMES)
-    if reserved:
-        raise WireError(
-            "plugin MCP server name(s) reserved for generated servers: "
-            + ", ".join(reserved)
-        )
     return merged
 
 
@@ -175,11 +169,13 @@ def _load_servers(path):
     return data, servers
 
 
-def generate_claude_mcp(workspace, caps, plugins):
-    """Regenerate <workspace>/main/.mcp.json from the manifest capabilities +
-    plugins — unless the repo ships its own (no marker file), or there is no
-    repo yet. Claude expands the ${VAR} header refs at launch via the shims,
-    so this file carries no literal secrets."""
+def generate_claude_mcp(workspace, claude_servers, plugins):
+    """Regenerate <workspace>/main/.mcp.json from the claude-bound agent servers
+    + plugins — unless the repo ships its own (no marker file), or there is no
+    repo yet. claude_servers is {name: spec} for agent-scoped servers this
+    container binds to claude (obsidian etc.), rendered ahead of the ordinary
+    plugins. Claude expands the ${VAR} header refs at launch via the shims, so
+    this file carries no literal secrets."""
     main_dir = workspace / "main"
     mcp_path = main_dir / ".mcp.json"
     marker = workspace / ".mcp.generated"
@@ -192,24 +188,13 @@ def generate_claude_mcp(workspace, caps, plugins):
         print(f"  (skipping .mcp.json — {main_dir} has no repo yet; fix the clone and rerun up.sh)")
         return
     if mcp_path.is_file() and not marker.is_file():
-        print("  (repo ships its own .mcp.json — leaving it alone; manifest capabilities/plugins are NOT merged into it)")
+        print("  (repo ships its own .mcp.json — leaving it alone; manifest plugins are NOT merged into it)")
         return
 
-    servers = {}
-    if caps.get("obsidian"):
-        servers["obsidian-annotated"] = {
-            "type": "http",
-            "url": OBSIDIAN_URL,
-            "headers": {"Authorization": "Bearer ${OBSIDIAN_ANNOTATED_KEY}"},
-        }
-
-    # A plugin adopting a generated name would silently shadow the
-    # identity-bearing entry (the merge below is last-wins) — hard-fail.
-    clash = sorted(n for n in plugins if n in servers)
-    if clash:
-        raise WireError(
-            "plugin MCP server name(s) collide with generated servers: " + ", ".join(clash)
-        )
+    # Agent-scoped servers bound to claude first (ref form), then ordinary
+    # plugins. The two sets are disjoint by construction (manifest.py routes
+    # agent-scoped plugins away from plugin_mcp_entries).
+    servers = dict(claude_servers)
     for name, spec in plugins.items():
         servers[name] = _claude_server(spec)
 
@@ -262,52 +247,60 @@ def preapprove_claude(home, workspace):
     print("  ✓ MCP servers pre-approved for claude (" + ", ".join(servers) + ")")
 
 
-def _merge_identity_entry(path, entry):
-    """Set mcpServers["obsidian-annotated"] in an existing config (preserving
-    plugin and hand-added servers) or create the file."""
+def _merge_named_entry(path, name, entry):
+    """Set mcpServers[name] in an existing config (preserving plugin and
+    hand-added servers) or create the file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data, servers = _load_servers(path)
     if data is None:
-        data = {"mcpServers": {"obsidian-annotated": entry}}
+        data = {"mcpServers": {name: entry}}
     else:
-        servers["obsidian-annotated"] = entry
+        servers[name] = entry
     _write_atomic(path, _dump_json(data), mode=0o600)
 
 
-def write_identity(agent, key, home):
-    """Wire one obsidian identity into its agent's config. Cursor and Gemini
-    cannot reliably expand env vars in headers for remote servers, so their
-    configs carry the literal key: home files, mode 600, never inside the
+def _literal_agent_config(agent, spec, slot, key):
+    """Render an agent-scoped remote server for a LITERAL-key agent: substitute
+    the agent's key for the ${slot} ref in every header, then shape per agent
+    (gemini wants httpUrl; pi wants an explicit type: http; cursor takes a bare
+    url). Non-string header values pass through untouched."""
+    ref = "${" + slot + "}"
+    headers = {k: (v.replace(ref, key) if isinstance(v, str) else v)
+               for k, v in (spec.get("headers") or {}).items()}
+    if agent == "gemini":
+        return {"httpUrl": spec.get("url"), "headers": headers}
+    if agent == "pi":
+        return {"type": "http", "url": spec.get("url"), "headers": headers}
+    return {"url": spec.get("url"), "headers": headers}  # cursor-agent
+
+
+def write_agent_server(agent, name, spec, slot, key, home):
+    """Wire one agent-scoped remote server into a LITERAL-key agent's config.
+    Cursor and Gemini cannot reliably expand env vars in remote headers, so
+    their configs carry the literal key: home files, mode 600, never inside the
     repo, regenerated from secrets.env on every up (rotation flows)."""
-    auth = {"Authorization": "Bearer " + key}
+    entry = _literal_agent_config(agent, spec, slot, key)
     if agent == "cursor-agent":
-        _merge_identity_entry(
-            home / ".cursor" / "mcp.json", {"url": OBSIDIAN_URL, "headers": auth}
-        )
-        print("  ✓ cursor-agent MCP config (literal key: env interpolation broken for remote headers)")
+        _merge_named_entry(home / ".cursor" / "mcp.json", name, entry)
+        print(f"  ✓ cursor-agent MCP config for {name} (literal key: env interpolation broken for remote headers)")
     elif agent == "gemini":
-        _merge_identity_entry(
-            home / ".gemini" / "settings.json", {"httpUrl": OBSIDIAN_URL, "headers": auth}
-        )
-        print("  ✓ gemini MCP config (literal key: header env expansion is an open FR)")
+        _merge_named_entry(home / ".gemini" / "settings.json", name, entry)
+        print(f"  ✓ gemini MCP config for {name} (literal key: header env expansion is an open FR)")
     elif agent == "pi":
-        # pi's file is wholly regenerated (no hand-managed entries expected);
-        # plugin entries are re-merged right after by wire_plugin_servers.
-        path = home / ".pi" / "agent" / "mcp.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        _write_atomic(
-            path,
-            _dump_json({"mcpServers": {"obsidian-annotated": {
-                "type": "http", "url": OBSIDIAN_URL, "headers": auth}}}),
-            mode=0o600,
-        )
-        print("  ✓ pi MCP config written (NOTE: inert until pi-mcp-adapter extension is installed — pi has no built-in MCP)")
-    elif agent == "codex":
-        print("  ⚠ codex obsidian identity not yet wired into ~/.codex/config.toml "
-              "(now safely container-local after the credential split — pending "
-              "verification of codex's remote-MCP config format). Key is available "
-              "to codex processes as OBSIDIAN_ANNOTATED_KEY via its shim.")
-    # claude: its identity rides in the generated .mcp.json as a ${VAR} ref.
+        # Merge (not wholesale write) so multiple agent servers coexist; plugin
+        # entries are re-merged right after by wire_plugin_servers_json.
+        _merge_named_entry(home / ".pi" / "agent" / "mcp.json", name, entry)
+        print(f"  ✓ pi MCP config for {name} (NOTE: inert until pi-mcp-adapter extension is installed — pi has no built-in MCP)")
+
+
+def warn_agent_server(agent, name, slot):
+    """codex's remote-MCP config format is still pending, so an agent-scoped
+    server bound to codex is not wired — but its key IS available to codex
+    processes as ${slot} via the shim (up.sh wrote it into codex's env file)."""
+    if agent == "codex":
+        print(f"  ⚠ codex agent-scoped server '{name}' not yet wired into ~/.codex/config.toml "
+              "(pending verification of codex's remote-MCP config format). The key is "
+              f"available to codex processes as {slot} via its shim.")
 
 
 def wire_plugin_servers_json(path, plugins):
@@ -406,21 +399,31 @@ def run(payload, home, workspace, env):
     if not isinstance(payload, dict):
         raise WireError("payload must be a JSON object")
     plugins = merge_plugin_entries(payload.get("plugin_mcp_entries") or [])
-    caps = payload.get("capabilities") or {}
+    agent_servers = payload.get("agent_servers") or []
     wire = payload.get("wire") or {}
 
-    generate_claude_mcp(workspace, caps, plugins)
+    # Claude's .mcp.json: agent-scoped servers bound to claude (ref form, key
+    # expands from claude's shim env) ahead of the ordinary plugins.
+    claude_servers = {s["name"]: _claude_server(s["spec"])
+                      for s in agent_servers if s.get("claude")}
+    generate_claude_mcp(workspace, claude_servers, plugins)
     preapprove_claude(home, workspace)
 
-    for ident in payload.get("identities") or []:
-        key = env.get(ident.get("key_env") or "", "")
-        write_identity(ident.get("agent") or "", key, home)
+    # Per-agent wiring of agent-scoped servers (literal key for cursor/gemini/pi,
+    # a warning for codex). Runs BEFORE the plugin merge so wire_plugin_servers_json
+    # preserves these non-sidecar entries.
+    for s in agent_servers:
+        for lit in s.get("literal") or []:
+            key = env.get(lit.get("key_env") or "", "")
+            write_agent_server(lit.get("agent") or "", s["name"], s["spec"], s["slot"], key, home)
+        for agent in s.get("warn") or []:
+            warn_agent_server(agent, s["name"], s["slot"])
 
     # Runs for every installed agent even with no plugins enabled, so entries
     # from a plugin removed from the manifest are cleaned up, not orphaned
     # (Claude gets this for free from wholesale .mcp.json regeneration). Only
-    # LOCAL plugins go here: remote ones live in Claude's .mcp.json alone until
-    # Phase 2 gives cursor/gemini per-agent remote rendering.
+    # LOCAL plugins go here: env-scoped remote plugins live in Claude's .mcp.json
+    # alone (cursor/gemini can't expand ${VAR} in remote headers).
     local = _local_plugins(plugins)
     if wire.get("cursor"):
         wire_plugin_servers_json(home / ".cursor" / "mcp.json", local)
@@ -436,13 +439,21 @@ def run(payload, home, workspace, env):
 def build_payload(env):
     """Host side: assemble the payload from env vars set by up.sh.
 
-    Booleans arrive as the raw yq scalars (WIRE_CURSOR/…, CAP_OBSIDIAN) and
-    only the literal string "true" turns a flag on — the exact semantics of
-    the old `[ "$X" = "true" ]` checks, so a truthy-looking `yes`/`1` stays off
-    instead of flipping on or corrupting the JSON. PLUGIN_MCP_ENTRIES is the
-    newline-separated one-line-JSON-per-plugin accumulation from manifest.py;
-    IDENTITY_AGENTS is space-separated "agent:KEY_ENV" pairs (KEY_ENV empty for
-    codex, whose key is deliberately never shipped).
+    Booleans arrive as the raw yq scalars (WIRE_CURSOR/…) and only the literal
+    string "true" turns a flag on — the exact semantics of the old
+    `[ "$X" = "true" ]` checks. PLUGIN_MCP_ENTRIES is the newline-separated
+    one-line-JSON-per-plugin accumulation from manifest.py (local + env-scoped
+    remote plugins only).
+
+    Agent-scoped servers (obsidian etc.) are assembled from two inputs:
+      AGENT_SERVERS_JSON — {slot: {"name": ..., "spec": {...}}}, the server
+                           definition per agent-scoped slot (from manifest.py).
+      IDENTITY_AGENTS    — space-separated "agent:key_env:slot" triples (up.sh
+                           builds these, assigning key_env=IDENTITY_KEY_N for
+                           the literal-key agents; empty for claude/codex).
+    build_payload groups the triples by slot into one agent_servers entry each,
+    marking claude (ref in .mcp.json), literal agents (cursor/gemini/pi), and
+    warn agents (codex).
     """
     def flag(name):
         return env.get(name) == "true"
@@ -459,19 +470,37 @@ def build_payload(env):
             raise WireError(f"plugin mcp extraction line is not a JSON object: {line}")
         entries.append(entry)
 
-    identities = []
-    for pair in (env.get("IDENTITY_AGENTS") or "").split():
-        agent, _, key_env = pair.partition(":")
-        identities.append({"agent": agent, "key_env": key_env})
+    try:
+        servers_by_slot = json.loads(env.get("AGENT_SERVERS_JSON") or "{}")
+    except ValueError as e:
+        raise WireError(f"AGENT_SERVERS_JSON is not valid JSON ({e})")
+
+    agent_servers = {}  # slot -> entry, in first-seen order
+    for triple in (env.get("IDENTITY_AGENTS") or "").split():
+        parts = triple.split(":")
+        agent = parts[0]
+        key_env = parts[1] if len(parts) > 1 else ""
+        slot = parts[2] if len(parts) > 2 else ""
+        sd = servers_by_slot.get(slot)
+        if sd is None:
+            raise WireError(f"agent binding for '{agent}' references slot '{slot}' with no server definition")
+        e = agent_servers.get(slot)
+        if e is None:
+            e = agent_servers[slot] = {"name": sd["name"], "slot": slot,
+                                       "spec": sd["spec"], "claude": False,
+                                       "literal": [], "warn": []}
+        if agent == "claude":
+            e["claude"] = True
+        elif agent == "codex":
+            e["warn"].append(agent)
+        else:
+            e["literal"].append({"agent": agent, "key_env": key_env})
 
     return {
         "wire": {name: flag("WIRE_" + name.upper())
                  for name in ("cursor", "gemini", "pi", "codex")},
-        # Only obsidian is still generated; gateway/proxyman/browser are plugins
-        # now and ride in plugin_mcp_entries (Plugins v2 Phase 1).
-        "capabilities": {"obsidian": flag("CAP_OBSIDIAN")},
         "plugin_mcp_entries": entries,
-        "identities": identities,
+        "agent_servers": list(agent_servers.values()),
     }
 
 

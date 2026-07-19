@@ -113,16 +113,19 @@ EOF
 [ -n "${GH_TOKEN:-}" ] && echo "GH_TOKEN=$GH_TOKEN" >> "$KEYS_PATH/common.env"
 chmod 600 "$KEYS_PATH/common.env"
 
-# Identity refs were validated by manifest.py, which also derived the
-# ref:agent pairs — compose them (indirect expansion, no eval)
-for pair in $OBS_REF_AGENTS; do
-    ref="${pair%%:*}"; a="${pair#*:}"; var="OBSIDIAN_KEY_${ref}"
-    echo "OBSIDIAN_ANNOTATED_KEY=${!var}" >> "$KEYS_PATH/$a.env"
-done
-for pair in $WATCH_REF_AGENTS; do
-    ref="${pair%%:*}"; a="${pair#*:}"; var="OBSIDIAN_WATCH_KEY_${ref}"
-    echo "ANNOTATED_WATCH_KEY=${!var}" >> "$KEYS_PATH/$a.env"
-done
+# Agent-scoped plugin secrets. manifest.py derived AGENT_SECRETS (one
+# agent<TAB>slot<TAB>source record per line) from agent_secrets bindings — and
+# from the deprecated identities: sugar. Each bound agent gets its OWN key
+# written into its <agent>.env (indirect expansion, no eval; the source var's
+# presence was validated by manifest.py). This covers both obsidian keys (a
+# server the wiring step then renders per agent) and env-only watch keys (no
+# server — delivery into the shim env is the whole point).
+while IFS=$'\t' read -r agent slot source; do
+    [ -n "$agent" ] || continue
+    echo "$slot=${!source}" >> "$KEYS_PATH/$agent.env"
+done <<EOF
+$AGENT_SECRETS
+EOF
 for f in "$KEYS_PATH"/*.env; do [ -f "$f" ] && chmod 600 "$f"; done
 
 # ── Host paths + platform ─────────────────────────────────────────────────────
@@ -306,35 +309,43 @@ echo "  ✓ global rules + skills linked (read-only; changes go via PR to the ru
 
 # ── Wire agent MCP configs (one exec into the baked-in Python module) ────────
 # All the config-file surgery — Claude's .mcp.json generation + ~/.claude.json
-# pre-approval, the cursor/gemini/pi identity + plugin merges with sidecar
-# stale-tracking, codex's managed TOML block — lives in src/wire_plugins.py
-# (baked into the image, unit-tested by tests/test_wire_plugins.py). The SAME
-# file also builds the JSON payload (--build-payload, host python3), so the
-# schema and the strict boolean semantics live in one tested place; bash only
-# routes env vars. Identity keys never enter the payload: they travel as
-# docker-exec env vars the payload references by name — and only for
-# cursor-agent/gemini/pi (claude's key rides in its shim env; codex is a
-# pending warning and ships no key at all).
-HAS_OBSIDIAN=false
+# pre-approval, the per-agent agent-scoped server rendering + plugin merges with
+# sidecar stale-tracking, codex's managed TOML block — lives in
+# src/wire_plugins.py (baked into the image, unit-tested by
+# tests/test_wire_plugins.py). The SAME file also builds the JSON payload
+# (--build-payload, host python3), so the schema and strict boolean semantics
+# live in one tested place; bash only routes env vars. Keys never enter the
+# payload: they travel as docker-exec env vars the payload references by name —
+# and only for cursor-agent/gemini/pi (claude expands the ${VAR} ref from its
+# shim env; codex is a pending warning and ships no key at all).
+#
+# Build the per-agent inputs for agent-scoped SERVERS from AGENT_SECRETS. Only
+# slots with an actual server (AGENT_SERVER_SLOTS) need wiring — an env-only
+# slot (a watch key) was already delivered into <agent>.env above and has
+# nothing to render. Triples are "agent:key_env:slot"; claude/codex carry an
+# empty key_env (claude uses the ref, codex is warned).
 IDENTITY_ENV=()
 IDENTITY_AGENTS=""
 i=0
-for pair in $OBS_REF_AGENTS; do
-    ref="${pair%%:*}"; a="${pair#*:}"; var="OBSIDIAN_KEY_${ref}"
-    case "$a" in
-        claude) HAS_OBSIDIAN=true ;;
-        codex)  IDENTITY_AGENTS="${IDENTITY_AGENTS:+$IDENTITY_AGENTS }codex:" ;;
-        cursor-agent|gemini|pi)
-            IDENTITY_ENV+=(-e "IDENTITY_KEY_${i}=${!var}")
-            IDENTITY_AGENTS="${IDENTITY_AGENTS:+$IDENTITY_AGENTS }$a:IDENTITY_KEY_$i"
+while IFS=$'\t' read -r agent slot source; do
+    [ -n "$agent" ] || continue
+    case " $AGENT_SERVER_SLOTS " in *" $slot "*) ;; *) continue ;; esac
+    case "$agent" in
+        claude|codex)
+            IDENTITY_AGENTS="${IDENTITY_AGENTS:+$IDENTITY_AGENTS }$agent::$slot" ;;
+        *)
+            IDENTITY_ENV+=(-e "IDENTITY_KEY_${i}=${!source}")
+            IDENTITY_AGENTS="${IDENTITY_AGENTS:+$IDENTITY_AGENTS }$agent:IDENTITY_KEY_$i:$slot"
             i=$((i + 1)) ;;
     esac
-done
+done <<EOF
+$AGENT_SECRETS
+EOF
 
 PAYLOAD=$(WIRE_CURSOR="$INSTALL_CURSOR" WIRE_GEMINI="$INSTALL_GEMINI" \
     WIRE_PI="$INSTALL_PI" WIRE_CODEX="$INSTALL_CODEX" \
-    CAP_OBSIDIAN="$HAS_OBSIDIAN" \
-    PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES" IDENTITY_AGENTS="$IDENTITY_AGENTS" \
+    PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES" \
+    AGENT_SERVERS_JSON="$AGENT_SERVERS_JSON" IDENTITY_AGENTS="$IDENTITY_AGENTS" \
     "$PYTHON3" "$SCRIPT_DIR/src/wire_plugins.py" --build-payload)
 
 printf '%s' "$PAYLOAD" | docker exec -i -u coder "${IDENTITY_ENV[@]}" "dev-agent-$NAME" \
