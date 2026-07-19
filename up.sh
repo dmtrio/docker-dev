@@ -92,34 +92,44 @@ rm -f "$KEYS_PATH"/*.env
 
 warn_missing() { echo "  ⚠ $1 not in secrets.env — $2 will not authenticate until set"; }
 
-# Env-scoped plugin secrets. manifest.py derived PLUGIN_ENV_SECRETS from the
-# enabled plugins' secrets: blocks (one SLOT<TAB>SOURCE<TAB>HINT record per
-# line). up.sh owns the VALUES — secrets.env is sourced above; manifest.py only
-# ever sees NAMES — so here we look up each SOURCE var (indirect expansion, no
-# eval) and write SLOT=<value> into common.env, or warn if it's unset. The
-# heredoc keeps the loop in this shell so the writes/warns aren't lost to a pipe
-# subshell.
-: > "$KEYS_PATH/common.env"
+# One COMPLETE env file per shim agent (Plugins v2 Phase 3 — common.env retired).
+# Each shim (baked into the image; SHIM_AGENTS must match the Dockerfile loop)
+# sources only its own <agent>.env, so that file must carry everything the agent
+# sees: the env-scoped secrets shared by all, then that agent's agent-scoped
+# secrets (appended last, so they override a shared value at compose time — not
+# via shim source order). `cat <agent>.env` is now the full audit of one agent.
+SHIM_AGENTS="claude pi gemini cursor-agent codex"
+
+# Shared block: env-scoped plugin secrets (PLUGIN_ENV_SECRETS: SLOT<TAB>SOURCE
+# <TAB>HINT per line) + GH_TOKEN. up.sh owns the VALUES (secrets.env is sourced
+# above; manifest.py only ever sees NAMES) — indirect expansion ${!source}, no
+# eval. Built once, then fanned out to every agent file. The heredoc keeps the
+# loop in this shell so the warns aren't lost to a pipe subshell.
+SHARED=""
 while IFS=$'\t' read -r slot source hint; do
     [ -n "$slot" ] || continue
     if [ -n "${!source:-}" ]; then
-        echo "$slot=${!source}" >> "$KEYS_PATH/common.env"
+        SHARED="${SHARED}${slot}=${!source}"$'\n'
     else
         warn_missing "$source" "$hint"
     fi
 done <<EOF
 $PLUGIN_ENV_SECRETS
 EOF
-[ -n "${GH_TOKEN:-}" ] && echo "GH_TOKEN=$GH_TOKEN" >> "$KEYS_PATH/common.env"
-chmod 600 "$KEYS_PATH/common.env"
+[ -n "${GH_TOKEN:-}" ] && SHARED="${SHARED}GH_TOKEN=$GH_TOKEN"$'\n'
+# chmod 600 as each file is created — it already holds secret values, so don't
+# leave it at the umask default even for the window until the trailing chmod
+# (KEYS_PATH is 700, but keep the file-level guarantee too).
+for a in $SHIM_AGENTS; do
+    printf '%s' "$SHARED" > "$KEYS_PATH/$a.env"; chmod 600 "$KEYS_PATH/$a.env"
+done
 
 # Agent-scoped plugin secrets. manifest.py derived AGENT_SECRETS (one
 # agent<TAB>slot<TAB>source record per line) from agent_secrets bindings — and
-# from the deprecated identities: sugar. Each bound agent gets its OWN key
-# written into its <agent>.env (indirect expansion, no eval; the source var's
-# presence was validated by manifest.py). This covers both obsidian keys (a
-# server the wiring step then renders per agent) and env-only watch keys (no
-# server — delivery into the shim env is the whole point).
+# from the deprecated identities: sugar. Each bound agent's OWN key is appended
+# to its file (after the shared block, so it wins on a name collision). Covers
+# both obsidian keys (a server the wiring step renders per agent) and env-only
+# watch keys (no server — delivery into the shim env is the whole point).
 while IFS=$'\t' read -r agent slot source; do
     [ -n "$agent" ] || continue
     echo "$slot=${!source}" >> "$KEYS_PATH/$agent.env"
