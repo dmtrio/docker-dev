@@ -91,11 +91,12 @@ run_ae() { ( cd "$REPO" && PATH="$WORK/aebin:$PATH" bash allow-egress.sh "$@" ) 
 mkdir -p "$WORK/aebin"
 cat > "$WORK/aebin/docker" <<'MOCK'
 #!/bin/bash
-case "$1 $2" in
-    "inspect -f") echo false ;;   # {{.State.Running}}
-    "inspect")    exit 0 ;;       # container exists
-    "ps -a"|"ps") : ;;
-    *) : ;;
+# $1=subcommand. `inspect -f {{.State.Running}} <c>` → not running (skip live
+# apply); plain `inspect <c>` → exit 0 (container exists); ps → nothing.
+case "$1" in
+    inspect) [ "$2" = "-f" ] && echo false; exit 0 ;;
+    ps)      exit 0 ;;
+    *)       exit 0 ;;
 esac
 MOCK
 chmod +x "$WORK/aebin/docker"
