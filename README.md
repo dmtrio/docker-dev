@@ -173,8 +173,10 @@ language's download is blocked, add the host live with `allow-egress.sh`.
 
 ## Identity model
 
-- **Per agent, not per container**: shims front each CLI and load
-  `~/.agent-keys/common.env` + `<agent>.env` at process start. Delegation
+- **Per agent, not per container**: shims front each CLI and load that agent's
+  own `~/.agent-keys/<agent>.env` at process start — one complete file per agent
+  (env-scoped secrets shared by all + that agent's own agent-scoped keys), so
+  `cat <agent>.env` is the full audit of what the agent sees. Delegation
   (`cursor-agent -p` from claude) never leaks the invoker's credentials.
 - **Obsidian Annotated**: one scoped key per agent, bound explicitly under the
   manifest's `agent_secrets:` (an agent-scoped plugin — `obsidian-annotated`

@@ -152,11 +152,16 @@ RUN set -e; \
     rm -f /tmp/plugin-install.sh
 
 # ── Agent-identity shims ──────────────────────────────────────────────────────
-# Each agent CLI is fronted by a shim that loads per-agent MCP credentials
-# from ~/.agent-keys/(common|<agent>).env, OVERRIDING inherited env, then
-# execs the real binary. This gives per-agent identity (attribution in tools
-# like Obsidian Annotated) and makes delegation safe: an agent spawning
-# another never passes its own credentials along.
+# Each agent CLI is fronted by a shim that loads per-agent MCP credentials from
+# ~/.agent-keys/<agent>.env, OVERRIDING inherited env, then execs the real
+# binary. This gives per-agent identity (attribution in tools like Obsidian
+# Annotated) and makes delegation safe: an agent spawning another never passes
+# its own credentials along.
+# As of Plugins v2 Phase 3, <agent>.env is COMPLETE (env-scoped + agent-scoped
+# secrets composed by up.sh) and common.env is no longer written. The shim
+# still sources common.env when present — a one-release transitional guard so an
+# older keys dir keeps working; a later release drops that line. The `set -a`
+# order (common first, then <agent>) means a fresh per-agent file wins.
 RUN mkdir -p /home/$USERNAME/.agent-shims && \
     for a in claude pi gemini cursor-agent codex; do \
         printf '#!/bin/bash\nAGENT=%s\nKEYS="$HOME/.agent-keys"\nset -a\n[ -f "$KEYS/common.env" ] && . "$KEYS/common.env"\n[ -f "$KEYS/$AGENT.env" ] && . "$KEYS/$AGENT.env"\nset +a\nREAL=$(type -aP %s | grep -v ".agent-shims" | head -1)\n[ -n "$REAL" ] || { echo "%s is not installed in this container" >&2; exit 127; }\nexec "$REAL" "$@"\n' "$a" "$a" "$a" > /home/$USERNAME/.agent-shims/$a && \

@@ -210,6 +210,20 @@ DOMAIN_BODY='([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+'
 grep -qF -- "$DOMAIN_BODY" allow-egress.sh && grep -qF -- "$DOMAIN_BODY" src/manifest.py \
     && pass "hostname rule matches between manifest.py and allow-egress.sh" \
     || fail "hostname rule drifted between manifest.py and allow-egress.sh"
+# The shim-agent list lives in three places (the Dockerfile bakes the shims;
+# up.sh writes one <agent>.env per shim agent; update-agent-keys.sh fans 'common'
+# across them). Drift would strand an agent with no env file or no override.
+SHIM_LIST="claude pi gemini cursor-agent codex"
+grep -qF "for a in $SHIM_LIST; do" Dockerfile \
+    && grep -qF "SHIM_AGENTS=\"$SHIM_LIST\"" up.sh \
+    && grep -qF "SHIM_AGENTS=\"$SHIM_LIST\"" update-agent-keys.sh \
+    && pass "shim-agent list matches across Dockerfile, up.sh, update-agent-keys.sh" \
+    || fail "shim-agent list drifted (Dockerfile ↔ up.sh ↔ update-agent-keys.sh)"
+# common.env is retired: up.sh must no longer WRITE it (the shim keeps a
+# transitional [ -f ] guard, so the Dockerfile reference is expected).
+grep -qE 'common\.env" *$|>> "\$KEYS_PATH/common.env"|> "\$KEYS_PATH/common.env"' up.sh \
+    && fail "up.sh still writes common.env (Phase 3 retired it)" \
+    || pass "up.sh no longer writes common.env"
 
 echo "── dockerfile bake"
 for f in plugins/*.yml; do
