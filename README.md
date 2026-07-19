@@ -153,13 +153,15 @@ Two independent axes, deliberately split:
   `src/manifest.py` validates the plugin file and derives the wiring, and
   `up.sh` hands it to `src/wire_plugins.py` (baked into the image; one
   `docker exec` with a JSON payload). Local servers merge into every installed
-  MCP-capable agent — claude's `.mcp.json` (pre-approved, like the generated
-  obsidian server), cursor-agent's / gemini's / pi's JSON configs, and a
-  managed `[mcp_servers.*]` block in codex's `config.toml` (aider has no MCP
-  support; pi's config is inert until the pi-mcp-adapter extension is
-  installed). Remote servers wire into claude's `.mcp.json` only (Phase 1).
-  Both fold their `egress`/`host_port` into the firewall. De-listing a plugin
-  removes its wiring on the next up. One asymmetry: if the workspace repo
+  MCP-capable agent — claude's `.mcp.json` (pre-approved by construction),
+  cursor-agent's / gemini's / pi's JSON configs, and a managed
+  `[mcp_servers.*]` block in codex's `config.toml` (aider has no MCP support;
+  pi's config is inert until the pi-mcp-adapter extension is installed).
+  Env-scoped remote servers wire into claude's `.mcp.json` only; **agent-scoped**
+  remote servers (obsidian) wire per bound agent — a `${VAR}` ref for claude,
+  the literal key for cursor/gemini/pi, a warning for codex. Plugins fold their
+  `egress`/`host_port` into the firewall. De-listing a plugin removes its
+  wiring on the next up. One asymmetry: if the workspace repo
   ships its own `.mcp.json`, claude keeps that file untouched (no plugin
   entries) while the other agents' home-dir configs are still wired.
 
@@ -174,10 +176,12 @@ language's download is blocked, add the host live with `allow-egress.sh`.
 - **Per agent, not per container**: shims front each CLI and load
   `~/.agent-keys/common.env` + `<agent>.env` at process start. Delegation
   (`cursor-agent -p` from claude) never leaks the invoker's credentials.
-- **Obsidian Annotated**: one scoped key per agent
-  (`OBSIDIAN_KEY_<ref>` in secrets.env), referenced explicitly from the
-  manifest's `identities:` lists — validated at `up` time, hard-fail on
-  dangling refs.
+- **Obsidian Annotated**: one scoped key per agent, bound explicitly under the
+  manifest's `agent_secrets:` (an agent-scoped plugin — `obsidian-annotated`
+  for the server, `annotated-watch` for the poll key). Each binding names the
+  agent, the plugin's slot, and the `secrets.env` source var — validated at
+  `up` time, hard-fail on a dangling source. (The old `identities:` ref-suffix
+  form still works for one release with a deprecation warning.)
 - **GitHub**: agents act as the machine user (`GH_TOKEN`); your personal
   login never enters a container unless you `gh auth login` there yourself.
   PRs/comments from agents show as the bot; you review and merge as you.

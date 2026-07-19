@@ -108,7 +108,7 @@ echo ",$EGRESS_ALL," | grep -qF ",blob.core.windows.net," \
 # full emitted variable set. grep first: quoted multi-line values (e.g.
 # PLUGIN_MCP_ENTRIES) have continuation lines that are not assignments.
 EMITTED=$(printf '%s\n' "$ALL_DERIVED" | grep -oE '^[A-Z_]+=' | tr -d = | LC_ALL=C sort | tr '\n' ' ')
-EXPECTED="CONTAINER_NTFY_TOPIC CONTAINER_NTFY_URL EGRESS EGRESS_CIDRS FORGE GIT_USER_EMAIL GIT_USER_NAME HOST_MCP_PORTS INSTALL_AIDER INSTALL_CLAUDE INSTALL_CODEX INSTALL_CURSOR INSTALL_GEMINI INSTALL_PI MEM_LIMIT MOSH_PORTS MOSH_PORTS_DASH OBS_REFS OBS_REF_AGENTS PLUGINS PLUGIN_ENV_SECRETS PLUGIN_MCP_ENTRIES REMOTE_MOSH REMOTE_NOTIFY REMOTE_TMUX REPO_URL SSH_BIND SSH_PORT WATCH_REFS WATCH_REF_AGENTS "
+EXPECTED="AGENT_SECRETS AGENT_SERVERS_JSON AGENT_SERVER_SLOTS CONTAINER_NTFY_TOPIC CONTAINER_NTFY_URL EGRESS EGRESS_CIDRS FORGE GIT_USER_EMAIL GIT_USER_NAME HOST_MCP_PORTS INSTALL_AIDER INSTALL_CLAUDE INSTALL_CODEX INSTALL_CURSOR INSTALL_GEMINI INSTALL_PI MEM_LIMIT MOSH_PORTS MOSH_PORTS_DASH PLUGINS PLUGIN_ENV_SECRETS PLUGIN_MCP_ENTRIES REMOTE_MOSH REMOTE_NOTIFY REMOTE_TMUX REPO_URL SSH_BIND SSH_PORT "
 [ "$EMITTED" = "$EXPECTED" ] \
     && pass "--derive emits exactly the variable set up.sh consumes" \
     || fail "emitted variable set changed (update up.sh consumers + this pin): $EMITTED"
@@ -133,18 +133,49 @@ printf '%s' "$PLUGIN_ENV_SECRETS" \
     && pass "gateway env-scoped secret slot derived into PLUGIN_ENV_SECRETS" \
     || fail "PLUGIN_ENV_SECRETS missing gateway slot: '$PLUGIN_ENV_SECRETS'"
 PAYLOAD=$(WIRE_CURSOR=true WIRE_GEMINI=yes WIRE_PI=false WIRE_CODEX=true \
-    CAP_OBSIDIAN=true \
     PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES" \
-    IDENTITY_AGENTS="cursor-agent:IDENTITY_KEY_0 codex:" \
+    AGENT_SERVERS_JSON="$AGENT_SERVERS_JSON" IDENTITY_AGENTS="$IDENTITY_AGENTS" \
     python3 src/wire_plugins.py --build-payload) \
     || fail "--build-payload exited non-zero"
 printf '%s' "$PAYLOAD" | jq -e '
     .wire == {cursor: true, gemini: false, pi: false, codex: true}
-    and .capabilities == {obsidian: true}
     and ([.plugin_mcp_entries[] | keys[0]] == ["serena", "coding"])
-    and .identities == [{agent: "cursor-agent", key_env: "IDENTITY_KEY_0"}, {agent: "codex", key_env: ""}]' >/dev/null \
+    and (.agent_servers == [])' >/dev/null \
     && pass "derive → build-payload yields the wiring payload (strict booleans: yes/1 stay off)" \
     || fail "payload chain output wrong: $PAYLOAD"
+
+echo "── agent_secrets chain: obsidian bound to claude + cursor-agent (Phase 2)"
+A_DERIVED=$(
+    {
+        printf '{"plugins": ["obsidian-annotated"], "agent_secrets": [{"agent":"claude","slot":"OBSIDIAN_ANNOTATED_KEY","secret":"OBSIDIAN_KEY_a_claude"},{"agent":"cursor-agent","slot":"OBSIDIAN_ANNOTATED_KEY","secret":"OBSIDIAN_KEY_b_cursor_agent"}]}\n'
+        printf 'obsidian-annotated\t'; yq -o=json -I=0 plugins/obsidian-annotated.yml
+    } | SECRET_KEY_VARS="OBSIDIAN_KEY_a_claude OBSIDIAN_KEY_b_cursor_agent" SECRETS_FILE=/sec/secrets.env python3 src/manifest.py --derive
+) || fail "--derive exited non-zero on an agent_secrets manifest"
+eval "$A_DERIVED"
+[ "$AGENT_SERVER_SLOTS" = "OBSIDIAN_ANNOTATED_KEY" ] \
+    && pass "obsidian-annotated derives an agent-scoped server slot" \
+    || fail "AGENT_SERVER_SLOTS wrong: '$AGENT_SERVER_SLOTS'"
+# up.sh's wiring loop: claude → ref (empty key_env); cursor-agent → literal key.
+A_IDA=""; A_IDENV=(); i=0
+while IFS=$'\t' read -r agent slot source; do
+    [ -n "$agent" ] || continue
+    case " $AGENT_SERVER_SLOTS " in *" $slot "*) ;; *) continue ;; esac
+    case "$agent" in
+        claude|codex) A_IDA="${A_IDA:+$A_IDA }$agent::$slot" ;;
+        *) A_IDENV+=(-e "IDENTITY_KEY_${i}=v$i"); A_IDA="${A_IDA:+$A_IDA }$agent:IDENTITY_KEY_$i:$slot"; i=$((i+1)) ;;
+    esac
+done <<AEOF
+$AGENT_SECRETS
+AEOF
+A_PAYLOAD=$(AGENT_SERVERS_JSON="$AGENT_SERVERS_JSON" IDENTITY_AGENTS="$A_IDA" python3 src/wire_plugins.py --build-payload) \
+    || fail "--build-payload exited non-zero on agent_servers"
+printf '%s' "$A_PAYLOAD" | jq -e '
+    (.agent_servers | length) == 1
+    and .agent_servers[0].name == "obsidian-annotated"
+    and .agent_servers[0].claude == true
+    and (.agent_servers[0].literal == [{agent: "cursor-agent", key_env: "IDENTITY_KEY_0"}])' >/dev/null \
+    && pass "agent_secrets → build-payload yields per-agent obsidian wiring" \
+    || fail "agent_servers payload wrong: $A_PAYLOAD"
 
 echo "── python unit tests (src/manifest.py + src/wire_plugins.py)"
 UNIT_OUT=$(python3 -m unittest discover -s tests 2>&1) \

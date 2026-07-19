@@ -58,12 +58,10 @@ import re
 import shlex
 import sys
 
-# Both modules live in src/ and run host-side here (wire_plugins.py is ALSO
-# baked into the image, where it never imports this file) — the reserved-name
-# set has exactly one home. Host ports are DATA now (each remote plugin's
-# host_port:), not a table in code, so nothing is imported for them.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wire_plugins import RESERVED_SERVER_NAMES
+# wire_plugins.py used to export the reserved-server-name set; as of Plugins v2
+# Phase 2 every MCP server comes from a plugin file (obsidian-annotated included),
+# so there are no reserved names and nothing is imported from it. Host ports and
+# server defs are all DATA (plugins/*.yml), not tables in code.
 
 # \Z, not $: Python's $ also matches just before a trailing newline, which
 # would wave "evil.com\n" through into dnsmasq config (the old bash never saw
@@ -88,7 +86,8 @@ AGENT_SUFFIXES = (
     ("_gemini", "gemini"),
 )
 
-OBSIDIAN_HOST = "mcp-obsidian.dmetr.io"
+# The MCP-capable agents an agent_secrets binding may name.
+AGENT_NAMES = frozenset({"claude", "codex", "pi", "gemini", "cursor-agent"})
 
 # Marker for a plugins/*.yml that yq could not parse (see module docstring).
 UNREADABLE = object()
@@ -258,6 +257,22 @@ def derive(manifest, plugin_files, env):
                   "instead (the capabilities: flag is sugar and will be removed)",
                   file=sys.stderr)
 
+    # ── identities: deprecated sugar for the obsidian/watch plugins + their
+    #    agent_secrets bindings (PLN - Plugins v2 Phase 2). Reading the refs
+    #    here lets the sugar auto-enable the plugin files so they validate like
+    #    any other; the ref→binding conversion + validation happens below. ────
+    ids = _section(manifest, "identities")
+    obs_refs = _word_list(ids.get("obsidian"), "identities.obsidian")
+    watch_refs = _word_list(ids.get("watch"), "identities.watch")
+    if obs_refs:
+        sugar_plugins.append("obsidian-annotated")
+    if watch_refs:
+        sugar_plugins.append("annotated-watch")
+    if obs_refs or watch_refs:
+        print("  ⚠ identities: is deprecated — bind agent-scoped secrets under "
+              "agent_secrets: (see plugins/obsidian-annotated.yml); identities: is "
+              "sugar and will be removed", file=sys.stderr)
+
     # ── Plugins list (aggregated errors, old order) ─────────────────────
     plugins_val = manifest.get("plugins")
     if not _falsy(plugins_val) and not isinstance(plugins_val, list):
@@ -319,58 +334,57 @@ def derive(manifest, plugin_files, env):
     out["MOSH_PORTS"] = mosh_ports
     out["MOSH_PORTS_DASH"] = mosh_ports_dash
 
-    # ── Identity refs (aggregated errors) ───────────────────────────────
-    ids = _section(manifest, "identities")
-    obs_refs = _word_list(ids.get("obsidian"), "identities.obsidian")
-    watch_refs = _word_list(ids.get("watch"), "identities.watch")
-
+    # ── identities: sugar → agent_secrets bindings (aggregated errors) ──────
+    # The old ref-suffix form still validates byte-for-byte, then converts to
+    # (agent, slot, source) records. The slot's plugin (obsidian-annotated /
+    # annotated-watch) was auto-enabled above, so slot existence is guaranteed;
+    # only the ref charset / suffix / source existence are checked here.
     secret_vars = set((env.get("SECRET_KEY_VARS") or "").split())
     identity_errors = []
+    sugar_bindings = []  # (agent, slot, source) from identities:
 
-    def check_ref(kind, prefix, ref):
+    def check_ref(kind, slot, prefix, ref):
         if not REF_RE.match(ref):
             identity_errors.append(
                 f"  {kind} ref '{ref}': illegal characters (allowed: letters, digits, underscore)")
             return
-        if not agent_for_ref(ref):
+        agent = agent_for_ref(ref)
+        if not agent:
             identity_errors.append(
                 f"  {kind} ref '{ref}': suffix is not a known agent (_claude/_codex/_pi/_gemini/_cursor_agent)")
             return
         var = f"{prefix}_{ref}"
         if var not in secret_vars:
             identity_errors.append(f"  {kind} ref '{ref}': {var} not found in {secrets_file}")
+            return
+        sugar_bindings.append((agent, slot, var))
 
     for ref in obs_refs:
-        check_ref("obsidian", "OBSIDIAN_KEY", ref)
+        check_ref("obsidian", "OBSIDIAN_ANNOTATED_KEY", "OBSIDIAN_KEY", ref)
     for ref in watch_refs:
-        check_ref("watch", "OBSIDIAN_WATCH_KEY", ref)
+        check_ref("watch", "ANNOTATED_WATCH_KEY", "OBSIDIAN_WATCH_KEY", ref)
     if identity_errors:
         raise ManifestError(
             "manifest identity references failed validation:\n" + "\n".join(identity_errors))
-    out["OBS_REFS"] = " ".join(obs_refs)
-    out["WATCH_REFS"] = " ".join(watch_refs)
-    # ref:agent pairs — so up.sh's key-composition and wiring loops don't
-    # need their own copy of the suffix→agent mapping anymore.
-    out["OBS_REF_AGENTS"] = " ".join(f"{r}:{agent_for_ref(r)}" for r in obs_refs)
-    out["WATCH_REF_AGENTS"] = " ".join(f"{r}:{agent_for_ref(r)}" for r in watch_refs)
 
-    # ── Egress fold: obsidian implies its endpoint; plugins add theirs ──
+    # Plugins fold their own egress (obsidian-annotated ships mcp-obsidian.dmetr.io).
     def add_egress_domain(domain):
         if domain not in egress_items:
             egress_items.append(domain)
 
-    if obs_refs:
-        add_egress_domain(OBSIDIAN_HOST)
-
     # ── Per-plugin egress + mcp entry validation (fail-fast, old order) ─
     # Each mcp server is local (command:) OR remote (url:) — the shape, not a
     # type: field, decides. host_port: is legal only with a remote server;
-    # install: is required iff a local server (the Dockerfile bakes it).
+    # install: is required iff a local server (the Dockerfile bakes it). A
+    # plugin that declares an AGENT-scoped secret is an "agent-server" plugin:
+    # its (single, remote) server is wired per bound agent, so it is routed to
+    # servers_by_slot instead of the uniform plugin_mcp_entries.
     plugin_mcp_entries = []
     seen_server_names = set()
     host_ports = []
-    env_slots = {}    # SLOT -> (plugin, hint)  for env-scoped secrets
-    agent_slots = {}  # SLOT -> plugin          declared now, bound in Phase 2
+    env_slots = {}         # SLOT -> (plugin, hint)  env-scoped secrets
+    agent_slots = {}       # SLOT -> plugin          agent-scoped secrets
+    servers_by_slot = {}   # agent SLOT -> {"name": ..., "spec": {...}}
     for p in plugins:
         doc = plugin_files[p]
         if doc is None:
@@ -383,6 +397,27 @@ def derive(manifest, plugin_files, env):
                 raise ManifestError(
                     f"plugin '{p}' egress entry '{d}' is not a bare hostname (no scheme, path, port, or wildcard — a domain already covers its subdomains)")
             add_egress_domain(d)
+
+        # Secrets first: knowing which of this plugin's slots are agent-scoped
+        # decides how its mcp servers are routed below.
+        secrets = doc.get("secrets")
+        secrets = {} if _falsy(secrets) else secrets
+        if not isinstance(secrets, dict):
+            raise ManifestError(f"plugin '{p}' secrets must be a map of SLOT: scope")
+        this_agent_slots = []
+        for slot, val in secrets.items():
+            if not REF_RE.match(slot):
+                raise ManifestError(
+                    f"plugin '{p}' secret slot '{slot}': illegal characters (must be a shell env var name)")
+            if slot in env_slots or slot in agent_slots:
+                raise ManifestError(f"secret slot '{slot}' is declared by more than one enabled plugin")
+            scope, hint = _parse_secret(val, p, slot)
+            if scope == "env":
+                env_slots[slot] = (p, hint)
+            else:
+                agent_slots[slot] = p
+                this_agent_slots.append(slot)
+
         mcp = doc.get("mcp")
         mcp = {} if _falsy(mcp) else mcp
         if not isinstance(mcp, dict):
@@ -393,9 +428,6 @@ def derive(manifest, plugin_files, env):
             if not NAME_RE.match(n):
                 raise ManifestError(
                     f"plugin '{p}' mcp server '{n}': illegal characters in name (allowed: letters, digits, underscore, dash — it becomes a TOML/JSON key)")
-            if n in RESERVED_SERVER_NAMES:
-                raise ManifestError(
-                    f"plugin '{p}' mcp server '{n}': name is reserved for generated servers")
             spec = spec if isinstance(spec, dict) else {}
             is_local = "command" in spec
             is_remote = "url" in spec
@@ -448,29 +480,69 @@ def derive(manifest, plugin_files, env):
                 raise ManifestError(f"plugin '{p}': host_port {hp} out of range (1-65535)")
             host_ports.append(hp)
 
-        secrets = doc.get("secrets")
-        secrets = {} if _falsy(secrets) else secrets
-        if not isinstance(secrets, dict):
-            raise ManifestError(f"plugin '{p}' secrets must be a map of SLOT: scope")
-        for slot, val in secrets.items():
-            if not REF_RE.match(slot):
+        # Route the plugin's mcp servers. Agent-scoped → per-agent wiring
+        # (servers_by_slot); everything else → uniform plugin_mcp_entries.
+        if this_agent_slots:
+            if len(this_agent_slots) > 1:
                 raise ManifestError(
-                    f"plugin '{p}' secret slot '{slot}': illegal characters (must be a shell env var name)")
-            if slot in env_slots or slot in agent_slots:
-                raise ManifestError(f"secret slot '{slot}' is declared by more than one enabled plugin")
-            scope, hint = _parse_secret(val, p, slot)
-            if scope == "env":
-                env_slots[slot] = (p, hint)
-            else:
-                agent_slots[slot] = p
-
-        # One line of compact JSON per plugin — the --build-payload contract.
-        plugin_mcp_entries.append(json.dumps(mcp, separators=(",", ":"), ensure_ascii=False))
+                    f"plugin '{p}': an agent-scoped plugin may declare only one agent secret slot (got {', '.join(this_agent_slots)})")
+            if len(mcp) > 1:
+                raise ManifestError(
+                    f"plugin '{p}': an agent-scoped plugin may define at most one mcp server (got {len(mcp)})")
+            slot = this_agent_slots[0]
+            for n, spec in mcp.items():
+                if "url" not in (spec if isinstance(spec, dict) else {}):
+                    raise ManifestError(
+                        f"plugin '{p}' mcp server '{n}': an agent-scoped server must be remote (url:)")
+                servers_by_slot[slot] = {"name": n, "spec": spec}
+        else:
+            # One line of compact JSON per plugin — the --build-payload contract.
+            plugin_mcp_entries.append(json.dumps(mcp, separators=(",", ":"), ensure_ascii=False))
     out["PLUGIN_MCP_ENTRIES"] = "".join(e + "\n" for e in plugin_mcp_entries)
     # Sorted + deduped so the firewall grant string is order-independent of the
-    # plugin list (the old CAPABILITY_PORTS table emitted 8811,8813,8814 in
-    # order) and two plugins sharing a port don't double up the grant.
+    # plugin list and two plugins sharing a port don't double up the grant.
     out["HOST_MCP_PORTS"] = ",".join(str(p) for p in sorted(set(host_ports)))
+    # Agent-scoped server defs (slot → {name, spec}) for the wiring payload, and
+    # the slots that actually have a server (env-only watch slots have none).
+    out["AGENT_SERVERS_JSON"] = json.dumps(servers_by_slot, separators=(",", ":"), ensure_ascii=False)
+    out["AGENT_SERVER_SLOTS"] = " ".join(servers_by_slot.keys())
+
+    # ── agent_secrets: per-agent bindings for agent-scoped slots ────────────
+    # Merge the identities: sugar bindings (validated above) with explicit
+    # agent_secrets records; validate agent/slot/source and emit one
+    # agent<tab>slot<tab>source record per line for up.sh to compose + wire.
+    explicit = manifest.get("agent_secrets")
+    explicit_bindings = []
+    if not _falsy(explicit):
+        if not isinstance(explicit, list):
+            raise ManifestError("manifest agent_secrets: must be a list of {agent, slot, secret} records")
+        for rec in explicit:
+            if not isinstance(rec, dict):
+                raise ManifestError("agent_secrets: each entry must be a map with agent, slot, secret")
+            agent = _scalar(rec.get("agent"), "agent_secrets.agent")
+            slot = _scalar(rec.get("slot"), "agent_secrets.slot")
+            source = _scalar(rec.get("secret"), "agent_secrets.secret")
+            if not agent or not slot or not source:
+                raise ManifestError("agent_secrets: each entry needs agent, slot, and secret")
+            explicit_bindings.append((agent, slot, source))
+
+    seen_binds = set()
+    agent_secret_records = []
+    for agent, slot, source in sugar_bindings + explicit_bindings:
+        if agent not in AGENT_NAMES:
+            raise ManifestError(
+                f"agent_secrets: unknown agent '{agent}' (one of {', '.join(sorted(AGENT_NAMES))})")
+        if slot not in agent_slots:
+            raise ManifestError(
+                f"agent_secrets: slot '{slot}' is not an agent-scoped secret of any enabled plugin")
+        if source not in secret_vars:
+            raise ManifestError(
+                f"agent_secrets: secret '{source}' (for {agent}/{slot}) not found in {secrets_file}")
+        if (agent, slot) in seen_binds:
+            raise ManifestError(f"agent_secrets: {agent} is bound to slot '{slot}' more than once")
+        seen_binds.add((agent, slot))
+        agent_secret_records.append((agent, slot, source))
+    out["AGENT_SECRETS"] = "".join(f"{a}\t{s}\t{src}\n" for a, s, src in agent_secret_records)
 
     # ── Env-scoped secret bindings (common_secrets) → required-secret plan ──
     # up.sh composes VALUES (it has secrets.env; this module never sees them):

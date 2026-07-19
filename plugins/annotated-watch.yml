@@ -1,0 +1,24 @@
+# plugins/annotated-watch.yml — an ENV-ONLY plugin: a single agent-scoped
+# secret slot and NO `mcp:` server at all. It exists purely to deliver a
+# per-agent key into an agent's shim environment.
+#
+# ANNOTATED_WATCH_KEY is the poll-scope key the watch-vault skill's background
+# monitor reads from the environment (it is not an MCP server — nothing to
+# wire). Because the slot is agent-scoped, each agent can carry its own watch
+# key, bound per container:
+#
+#   plugins: [annotated-watch]
+#   agent_secrets:
+#     - {agent: claude, slot: ANNOTATED_WATCH_KEY, secret: OBSIDIAN_WATCH_KEY_me_claude}
+#
+# up.sh writes ANNOTATED_WATCH_KEY into that agent's <agent>.env; there is no
+# MCP config change for any agent. This is proof that the general
+# secret-slot mechanism is what "identities" always were — a watch key is just
+# an agent-scoped secret with no server.
+#
+# Migrated from the old `identities: {watch: [...]}` manifest key (PLN -
+# Plugins v2, Phase 2); `identities:` still works as deprecated sugar for one
+# release.
+
+secrets:
+  ANNOTATED_WATCH_KEY: agent

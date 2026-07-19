@@ -78,24 +78,32 @@ capabilities:
 #   proxyman → 8813, PROXYMAN_BRIDGE_KEY   (run-proxyman-bridge.sh — traffic capture)
 #   browser  → 8814, RESEARCH_BROWSER_KEY  (run-research-browser.sh — watchable desktop browser)
 #
-#   plugins: [serena, gateway]     # serena: code retrieval/editing over LSP (local)
+#   plugins: [serena, gateway, obsidian-annotated]   # serena: local; others remote
 plugins: []
 
-# Per-agent identities — EXPLICIT references to secrets.env names.
-# An entry R reads OBSIDIAN_KEY_R (obsidian) or OBSIDIAN_WATCH_KEY_R (watch);
-# the agent it belongs to is R's suffix: _claude, _codex, _pi, _gemini,
-# _cursor_agent. up.sh validates every reference at apply time and HARD-FAILS
-# if a key is missing from secrets.env or a suffix isn't a known agent.
-# Any obsidian entry also allowlists the Annotated endpoint.
+# Per-agent secret bindings. An AGENT-SCOPED plugin (its secrets: slot is
+# `agent`) is wired only for the agents you bind here, each presenting its OWN
+# key. A binding is a flat record: which agent, which slot the plugin declares,
+# and which secrets.env var supplies that agent's value.
+#   - obsidian-annotated declares slot OBSIDIAN_ANNOTATED_KEY (a remote server);
+#     it also allowlists the Annotated endpoint when enabled.
+#   - annotated-watch declares slot ANNOTATED_WATCH_KEY (env-only; no server —
+#     just delivers the watch-vault poll key into that agent's shim env).
+# up.sh HARD-FAILS at apply time if a source var is missing from secrets.env or
+# the agent/slot is unknown. Sources are currently OBSIDIAN_KEY_* /
+# OBSIDIAN_WATCH_KEY_* names (the vars up.sh scans from secrets.env).
 #
 # Example:
-#   identities:
-#     obsidian: [personal_site_claude, default_gemini]
-#     watch: [personal_site_claude]
+#   plugins: [obsidian-annotated, annotated-watch]
+#   agent_secrets:
+#     - {agent: claude, slot: OBSIDIAN_ANNOTATED_KEY, secret: OBSIDIAN_KEY_site_claude}
+#     - {agent: gemini, slot: OBSIDIAN_ANNOTATED_KEY, secret: OBSIDIAN_KEY_site_gemini}
+#     - {agent: claude, slot: ANNOTATED_WATCH_KEY,    secret: OBSIDIAN_WATCH_KEY_site_claude}
 # reads from secrets.env (default ./.dev-agent/secrets.env; see secrets.env.example):
-#   OBSIDIAN_KEY_personal_site_claude=ann_additive_…   → claude
-#   OBSIDIAN_KEY_default_gemini=ann_additive_…         → gemini (shared identity)
-#   OBSIDIAN_WATCH_KEY_personal_site_claude=ann_poll_… → claude
-identities:
-  obsidian: []
-  watch: []
+#   OBSIDIAN_KEY_site_claude=ann_additive_…        → claude's obsidian identity
+#   OBSIDIAN_KEY_site_gemini=ann_additive_…        → gemini's obsidian identity
+#   OBSIDIAN_WATCH_KEY_site_claude=ann_poll_…      → claude's watch key
+#
+# (The old `identities: {obsidian: [...], watch: [...]}` ref-suffix form still
+#  works for one release but prints a deprecation warning — prefer agent_secrets.)
+agent_secrets: []
