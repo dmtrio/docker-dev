@@ -228,16 +228,19 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
 - `src/` — internal source, never run directly:
   - `common.sh` — shared path resolution (sourced by the scripts)
   - `manifest.py` — host-side manifest validation; `wire_plugins.py` — the
-    agent-config writer `up.sh` execs after boot
+    agent-config writer `up.sh` execs after boot; `compose-keys.sh` — host-side
+    key-file composition `up.sh` sources
   - `entrypoint.sh`, `init-firewall.sh`, `tmux*`, `mosh-server-wrapper.sh` —
     baked into the image
 - `compose/` — `docker-compose.local.yml` (base) plus the `ssh.yml` / `mosh.yml`
   overlays `up.sh` applies for a manifest's `ssh:` / `remote.mosh` settings
 - `docs/` — `script.md` (every script, grouped by lifecycle), `TIPS.md`,
   `workspace.CLAUDE.md` (copied into each container as `/workspace/CLAUDE.md`)
-- `tests/` — host-runnable checks (`plugins.test.sh` — yq + jq + python3;
-  the manifest validation and wiring logic are unit-tested in
-  `test_manifest.py` / `test_wire_plugins.py`)
+- `tests/` — host-runnable checks. `plugins.test.sh` is the entry point (yq +
+  jq + python3); it runs the Python unit tests (`test_manifest.py` /
+  `test_wire_plugins.py` — manifest validation + wiring logic) and the
+  host-side bash unit tests (`bash.test.sh` — `compose-keys.sh`, `common.sh`,
+  `allow-egress.sh`, `update-agent-keys.sh`, the run-*.sh token generation)
 - `Dockerfile` — the shared image and its contracts
 - `secrets.env.example` — template for your `secrets.env`
 - `.env` (gitignored) — optional `DEV_AGENT_HOME` / `RULES_PATH` /
