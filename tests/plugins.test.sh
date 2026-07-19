@@ -53,10 +53,15 @@ for f in plugins/*.yml; do
         && pass "$name: passes manifest.py validation" \
         || fail "$name: rejected by manifest.py: $(printf '%s' "$OUT" | head -3)"
 
+    # install: is required iff the plugin has a LOCAL (command:) server — those
+    # bake a binary. Remote (url:) and egress-only plugins carry no install:.
+    has_local=$(yq -r '[(.mcp // {})[] | select(has("command"))] | length' "$f")
     install=$(yq -r '.install // ""' "$f")
-    [ -n "$install" ] && [ "$install" != "null" ] \
-        && pass "$name: install block present" \
-        || fail "$name: missing install: (yq -e in the Dockerfile fails the build)"
+    if [ "${has_local:-0}" != "0" ] && { [ -z "$install" ] || [ "$install" = "null" ]; }; then
+        fail "$name: local (command:) server needs an install: block (manifest.py fails derive)"
+    else
+        pass "$name: install present iff local server"
+    fi
 done
 [ "$found" = 1 ] || fail "no plugin files found under plugins/"
 
@@ -103,29 +108,40 @@ echo ",$EGRESS_ALL," | grep -qF ",blob.core.windows.net," \
 # full emitted variable set. grep first: quoted multi-line values (e.g.
 # PLUGIN_MCP_ENTRIES) have continuation lines that are not assignments.
 EMITTED=$(printf '%s\n' "$ALL_DERIVED" | grep -oE '^[A-Z_]+=' | tr -d = | LC_ALL=C sort | tr '\n' ' ')
-EXPECTED="CAP_BROWSER CAP_GATEWAY CAP_PROXYMAN CONTAINER_NTFY_TOPIC CONTAINER_NTFY_URL EGRESS EGRESS_CIDRS FORGE GIT_USER_EMAIL GIT_USER_NAME HOST_MCP_PORTS INSTALL_AIDER INSTALL_CLAUDE INSTALL_CODEX INSTALL_CURSOR INSTALL_GEMINI INSTALL_PI MEM_LIMIT MOSH_PORTS MOSH_PORTS_DASH OBS_REFS OBS_REF_AGENTS PLUGINS PLUGIN_MCP_ENTRIES REMOTE_MOSH REMOTE_NOTIFY REMOTE_TMUX REPO_URL SSH_BIND SSH_PORT WATCH_REFS WATCH_REF_AGENTS "
+EXPECTED="CONTAINER_NTFY_TOPIC CONTAINER_NTFY_URL EGRESS EGRESS_CIDRS FORGE GIT_USER_EMAIL GIT_USER_NAME HOST_MCP_PORTS INSTALL_AIDER INSTALL_CLAUDE INSTALL_CODEX INSTALL_CURSOR INSTALL_GEMINI INSTALL_PI MEM_LIMIT MOSH_PORTS MOSH_PORTS_DASH OBS_REFS OBS_REF_AGENTS PLUGINS PLUGIN_ENV_SECRETS PLUGIN_MCP_ENTRIES REMOTE_MOSH REMOTE_NOTIFY REMOTE_TMUX REPO_URL SSH_BIND SSH_PORT WATCH_REFS WATCH_REF_AGENTS "
 [ "$EMITTED" = "$EXPECTED" ] \
     && pass "--derive emits exactly the variable set up.sh consumes" \
     || fail "emitted variable set changed (update up.sh consumers + this pin): $EMITTED"
 
-echo "── derive → build-payload chain (both host halves, real serena file)"
+echo "── derive → build-payload chain (both host halves, real serena + gateway files)"
+# A local plugin (serena) + a remote plugin (gateway): manifest.py derives its
+# host_port into HOST_MCP_PORTS, its secret slot into PLUGIN_ENV_SECRETS, and
+# its mcp entry into PLUGIN_MCP_ENTRIES alongside serena's.
 DERIVED=$(
     {
-        printf '{"plugins": ["serena"], "capabilities": {"gateway": true}}\n'
+        printf '{"plugins": ["serena", "gateway"]}\n'
         printf 'serena\t'; yq -o=json -I=0 plugins/serena.yml
+        printf 'gateway\t'; yq -o=json -I=0 plugins/gateway.yml
     } | python3 src/manifest.py --derive
-) || fail "--derive exited non-zero on a serena manifest"
-PLUGIN_MCP_ENTRIES=$(eval "$DERIVED"; printf '%s' "$PLUGIN_MCP_ENTRIES")
+) || fail "--derive exited non-zero on a serena+gateway manifest"
+eval "$DERIVED"
+[ "$HOST_MCP_PORTS" = "8811" ] \
+    && pass "gateway host_port folds into HOST_MCP_PORTS" \
+    || fail "HOST_MCP_PORTS wrong: '$HOST_MCP_PORTS'"
+printf '%s' "$PLUGIN_ENV_SECRETS" \
+    | grep -qF "$(printf 'MCP_GATEWAY_TOKEN\tMCP_GATEWAY_TOKEN\tgateway')" \
+    && pass "gateway env-scoped secret slot derived into PLUGIN_ENV_SECRETS" \
+    || fail "PLUGIN_ENV_SECRETS missing gateway slot: '$PLUGIN_ENV_SECRETS'"
 PAYLOAD=$(WIRE_CURSOR=true WIRE_GEMINI=yes WIRE_PI=false WIRE_CODEX=true \
-    CAP_GATEWAY=true CAP_PROXYMAN=1 CAP_BROWSER=false CAP_OBSIDIAN=true \
+    CAP_OBSIDIAN=true \
     PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES" \
     IDENTITY_AGENTS="cursor-agent:IDENTITY_KEY_0 codex:" \
     python3 src/wire_plugins.py --build-payload) \
     || fail "--build-payload exited non-zero"
 printf '%s' "$PAYLOAD" | jq -e '
     .wire == {cursor: true, gemini: false, pi: false, codex: true}
-    and .capabilities == {gateway: true, proxyman: false, browser: false, obsidian: true}
-    and (.plugin_mcp_entries[0] | has("serena"))
+    and .capabilities == {obsidian: true}
+    and ([.plugin_mcp_entries[] | keys[0]] == ["serena", "coding"])
     and .identities == [{agent: "cursor-agent", key_env: "IDENTITY_KEY_0"}, {agent: "codex", key_env: ""}]' >/dev/null \
     && pass "derive → build-payload yields the wiring payload (strict booleans: yes/1 stay off)" \
     || fail "payload chain output wrong: $PAYLOAD"
@@ -167,13 +183,18 @@ grep -qF -- "$DOMAIN_BODY" allow-egress.sh && grep -qF -- "$DOMAIN_BODY" src/man
 echo "── dockerfile bake"
 for f in plugins/*.yml; do
     [ -e "$f" ] || continue
+    # Only local plugins carry an install: block; skip the empty string a
+    # remote/config-only plugin yields (bash -n on "" trivially passes anyway).
     yq -r '.install // ""' "$f" | bash -n \
-        && pass "$(basename "$f" .yml): install block is valid bash" \
+        && pass "$(basename "$f" .yml): install block is valid bash (or empty)" \
         || fail "$(basename "$f" .yml): install block fails bash -n"
 done
 grep -qF -- "yq -e -r '.install'" Dockerfile \
-    && pass "Dockerfile bake uses yq -e (missing install: fails the build)" \
-    || fail "Dockerfile bake no longer hard-fails on a missing install: key"
+    && pass "Dockerfile bake still gates on .install via yq -e" \
+    || fail "Dockerfile bake no longer reads .install"
+grep -qF -- "config-only, nothing to bake" Dockerfile \
+    && pass "Dockerfile bake skips remote (no-install) plugins instead of failing the build" \
+    || fail "Dockerfile bake no longer skips no-install plugins (remote plugins would break the build)"
 grep -qF -- "COPY src/wire_plugins.py" Dockerfile \
     && pass "Dockerfile bakes src/wire_plugins.py into the image" \
     || fail "Dockerfile no longer bakes wire_plugins.py (up.sh execs it)"

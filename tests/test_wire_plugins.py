@@ -98,14 +98,15 @@ class TestGenerateClaudeMcp(QuietTestCase):
 
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                wire_plugins.generate_claude_mcp(workspace, {"gateway": True}, {})
+                wire_plugins.generate_claude_mcp(workspace, {"obsidian": True}, {})
 
             self.assertEqual(mcp_path.read_text(), original_content)
             self.assertFalse((workspace / ".mcp.generated").exists())
             self.assertIn("repo ships its own .mcp.json", output.getvalue())
 
-    def test_fresh_generation_with_capabilities_and_plugin(self):
-        """Fresh generation with all caps true + plugin: JSON in order, marker created."""
+    def test_fresh_generation_obsidian_plus_local_and_remote_plugins(self):
+        """Fresh generation: obsidian generated + a local plugin (verbatim) +
+        a remote plugin (gains type: http). Marker created, idempotent."""
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             main_dir = workspace / "main"
@@ -114,13 +115,12 @@ class TestGenerateClaudeMcp(QuietTestCase):
             mcp_path = main_dir / ".mcp.json"
             marker = workspace / ".mcp.generated"
 
-            caps = {
-                "gateway": True,
-                "proxyman": True,
-                "browser": True,
-                "obsidian": True,
+            caps = {"obsidian": True}
+            plugins = {
+                "myserena": {"command": "bash", "args": ["-c"]},          # local
+                "coding": {"url": "http://host.docker.internal:8811/mcp",  # remote
+                           "headers": {"Authorization": "Bearer ${MCP_GATEWAY_TOKEN}"}},
             }
-            plugins = {"myserena": {"command": "bash", "args": ["-c"]}}
 
             wire_plugins.generate_claude_mcp(workspace, caps, plugins)
 
@@ -128,18 +128,19 @@ class TestGenerateClaudeMcp(QuietTestCase):
             self.assertTrue(marker.exists())
 
             content = mcp_path.read_text()
-            data = json.loads(content)
             self.assertTrue(content.endswith("\n"))
-
-            servers = data["mcpServers"]
-            keys = list(servers.keys())
-            # Order: coding, proxyman, browser, obsidian-annotated, then plugins
-            self.assertEqual(keys[:4], ["coding", "proxyman", "browser", "obsidian-annotated"])
-            self.assertIn("myserena", keys)
-
-            # Check header refs are NOT expanded
-            self.assertEqual(servers["coding"]["headers"]["Authorization"], "Bearer ${MCP_GATEWAY_TOKEN}")
-            self.assertEqual(servers["proxyman"]["headers"]["X-API-Key"], "${PROXYMAN_BRIDGE_KEY}")
+            servers = json.loads(content)["mcpServers"]
+            # obsidian generated first, then plugins in insertion order
+            self.assertEqual(list(servers), ["obsidian-annotated", "myserena", "coding"])
+            # local plugin passes through verbatim (no type: injected)
+            self.assertEqual(servers["myserena"], {"command": "bash", "args": ["-c"]})
+            # remote plugin gains type: http; header ${VAR} refs NOT expanded
+            self.assertEqual(servers["coding"], {
+                "type": "http",
+                "url": "http://host.docker.internal:8811/mcp",
+                "headers": {"Authorization": "Bearer ${MCP_GATEWAY_TOKEN}"}})
+            self.assertEqual(servers["obsidian-annotated"]["headers"]["Authorization"],
+                             "Bearer ${OBSIDIAN_ANNOTATED_KEY}")
 
             # Rerun with marker present (idempotency check)
             wire_plugins.generate_claude_mcp(workspace, caps, plugins)
@@ -159,8 +160,9 @@ class TestGenerateClaudeMcp(QuietTestCase):
             data = json.loads(mcp_path.read_text())
             self.assertEqual(data["mcpServers"], {})
 
-    def test_plugin_named_coding_collides_with_gateway_capability(self):
-        """Plugin named 'coding' with gateway=true raises WireError."""
+    def test_plugin_named_obsidian_collides_with_generated(self):
+        """A plugin squatting the one still-generated name (obsidian-annotated)
+        with obsidian enabled raises WireError."""
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             main_dir = workspace / "main"
@@ -170,8 +172,8 @@ class TestGenerateClaudeMcp(QuietTestCase):
             with self.assertRaises(wire_plugins.WireError) as cm:
                 wire_plugins.generate_claude_mcp(
                     workspace,
-                    {"gateway": True},
-                    {"coding": {"command": "bash"}}
+                    {"obsidian": True},
+                    {"obsidian-annotated": {"command": "bash"}}
                 )
             self.assertIn("collide with generated servers", str(cm.exception))
 
@@ -655,11 +657,12 @@ class TestRunIntegration(QuietTestCase):
                     "codex": True,
                 },
                 "capabilities": {
-                    "gateway": True,
                     "obsidian": True,
                 },
                 "plugin_mcp_entries": [
-                    {"myserena": {"command": "bash", "args": ["-c"]}}
+                    {"myserena": {"command": "bash", "args": ["-c"]}},   # local
+                    {"coding": {"url": "http://host.docker.internal:8811/mcp",  # remote
+                                "headers": {"Authorization": "Bearer ${MCP_GATEWAY_TOKEN}"}}},
                 ],
                 "identities": [
                     {"agent": "cursor-agent", "key_env": "OBSIDIAN_KEY_0"}
@@ -668,20 +671,27 @@ class TestRunIntegration(QuietTestCase):
 
             wire_plugins.run(payload, home, workspace, env)
 
-            # .mcp.json generated (claude)
+            # .mcp.json generated (claude) — gets obsidian + BOTH plugins
             self.assertTrue((main_dir / ".mcp.json").exists())
+            claude = json.loads((main_dir / ".mcp.json").read_text())["mcpServers"]
+            self.assertEqual(set(claude), {"obsidian-annotated", "myserena", "coding"})
             # ~/.claude.json pre-approved
             self.assertTrue((home / ".claude.json").exists())
-            # cursor identity (literal key) + plugin
+            # cursor identity (literal key) + LOCAL plugin only (no remote coding)
             cursor_mcp = home / ".cursor" / "mcp.json"
             self.assertTrue(cursor_mcp.exists())
             cursor_data = json.loads(cursor_mcp.read_text())
             self.assertIn("obsidian-annotated", cursor_data["mcpServers"])
             self.assertIn("myserena", cursor_data["mcpServers"])
+            self.assertNotIn("coding", cursor_data["mcpServers"])
             self.assertEqual(
                 cursor_data["mcpServers"]["obsidian-annotated"]["headers"]["Authorization"],
                 "Bearer LITERALKEY"
             )
+            # codex managed block carries the local plugin, not the remote one
+            codex_toml = (home / ".codex" / "config.toml").read_text()
+            self.assertIn("[mcp_servers.myserena]", codex_toml)
+            self.assertNotIn("coding", codex_toml)
             # pi config exists
             self.assertTrue((home / ".pi" / "agent" / "mcp.json").exists())
             # gemini config exists
@@ -751,10 +761,16 @@ class TestReservedNames(unittest.TestCase):
     (the host-side up.sh check is the fast-fail duplicate)."""
 
     def test_plugin_squatting_reserved_name_raises(self):
-        for name in ("coding", "proxyman", "browser", "obsidian-annotated"):
-            with self.assertRaises(wire_plugins.WireError) as cm:
-                wire_plugins.merge_plugin_entries([{name: {"command": "x"}}])
-            self.assertIn("reserved for generated servers", str(cm.exception))
+        # obsidian-annotated is the only still-reserved (generated) name.
+        with self.assertRaises(wire_plugins.WireError) as cm:
+            wire_plugins.merge_plugin_entries([{"obsidian-annotated": {"command": "x"}}])
+        self.assertIn("reserved for generated servers", str(cm.exception))
+
+    def test_former_capability_server_names_now_pass(self):
+        # coding/proxyman/browser are plugin data now — no longer reserved.
+        for name in ("coding", "proxyman", "browser"):
+            merged = wire_plugins.merge_plugin_entries([{name: {"url": "http://h/mcp"}}])
+            self.assertIn(name, merged)
 
     def test_ordinary_name_passes(self):
         merged = wire_plugins.merge_plugin_entries([{"serena": {"command": "x"}}])
@@ -854,14 +870,18 @@ class TestBuildPayload(unittest.TestCase):
 
     def test_only_literal_true_enables_flags(self):
         env = {"WIRE_CURSOR": "true", "WIRE_GEMINI": "yes", "WIRE_PI": "1",
-               "WIRE_CODEX": "True", "CAP_GATEWAY": "true", "CAP_PROXYMAN": "on",
-               "CAP_BROWSER": "", "CAP_OBSIDIAN": "false"}
+               "WIRE_CODEX": "True", "CAP_OBSIDIAN": "true"}
         payload = wire_plugins.build_payload(env)
         self.assertEqual(payload["wire"],
                          {"cursor": True, "gemini": False, "pi": False, "codex": False})
-        self.assertEqual(payload["capabilities"],
-                         {"gateway": True, "proxyman": False, "browser": False,
-                          "obsidian": False})
+        # capabilities carries only obsidian now (gateway/proxyman/browser are
+        # plugins and arrive via plugin_mcp_entries).
+        self.assertEqual(payload["capabilities"], {"obsidian": True})
+
+    def test_obsidian_flag_off_unless_literal_true(self):
+        self.assertEqual(
+            wire_plugins.build_payload({"CAP_OBSIDIAN": "yes"})["capabilities"],
+            {"obsidian": False})
 
     def test_missing_env_means_everything_off_and_empty(self):
         payload = wire_plugins.build_payload({})
@@ -895,25 +915,33 @@ class TestBuildPayload(unittest.TestCase):
         ])
 
     def test_round_trips_through_run(self):
-        """The payload build_payload emits is exactly what run() consumes."""
+        """The payload build_payload emits is exactly what run() consumes, and
+        a remote plugin reaches Claude only (Phase 1) while a local one reaches
+        every agent."""
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
             home.mkdir()
             workspace = Path(tmp) / "workspace"
             (workspace / "main" / ".git").mkdir(parents=True)
-            env = {"WIRE_CURSOR": "true", "CAP_GATEWAY": "true",
-                   "PLUGIN_MCP_ENTRIES": '{"serena": {"command": "bash"}}\n',
+            gateway = ('{"coding": {"url": "http://host.docker.internal:8811/mcp",'
+                       '"headers": {"Authorization": "Bearer ${MCP_GATEWAY_TOKEN}"}}}')
+            env = {"WIRE_CURSOR": "true", "CAP_OBSIDIAN": "true",
+                   "PLUGIN_MCP_ENTRIES": '{"serena": {"command": "bash"}}\n' + gateway + "\n",
                    "IDENTITY_AGENTS": "cursor-agent:K0", "K0": "SECRET"}
             payload = json.loads(json.dumps(wire_plugins.build_payload(env)))
             with contextlib.redirect_stdout(io.StringIO()):
                 wire_plugins.run(payload, home, workspace, env)
             cursor = json.loads((home / ".cursor" / "mcp.json").read_text())
+            # cursor: local plugin + its obsidian identity, NOT the remote server
             self.assertIn("serena", cursor["mcpServers"])
+            self.assertNotIn("coding", cursor["mcpServers"])
             self.assertEqual(
                 cursor["mcpServers"]["obsidian-annotated"]["headers"]["Authorization"],
                 "Bearer SECRET")
             mcp = json.loads((workspace / "main" / ".mcp.json").read_text())
-            self.assertEqual(list(mcp["mcpServers"]), ["coding", "serena"])
+            # claude: obsidian (generated) + both plugins; remote gains type:http
+            self.assertEqual(list(mcp["mcpServers"]), ["obsidian-annotated", "serena", "coding"])
+            self.assertEqual(mcp["mcpServers"]["coding"]["type"], "http")
 
 
 class TestMainSubprocess(unittest.TestCase):

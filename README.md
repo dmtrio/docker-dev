@@ -82,27 +82,31 @@ Container"** → `dev-agent-my-app` (lands as `coder` in `/workspace` — open
 auth volumes): `claude` login; `codex` / `gemini` if used. Agents already
 carry the GitHub machine-user token from `secrets.env`.
 
-## Capabilities (manifest → Mac-side service)
+## Firewall egress (`capabilities:`)
 
-| Manifest key | Port | Service (run in tmux/launchd) | Secret in secrets.env |
-|---|---|---|---|
-| `gateway: true` | 8811 | `run-gateway-coding.sh` — headless Playwright via Docker MCP gateway | `MCP_GATEWAY_TOKEN` |
-| `proxyman: true` | 8813 | `run-proxyman-bridge.sh` — Proxyman traffic capture | `PROXYMAN_BRIDGE_KEY` |
-| `browser: true` | 8814 | `run-research-browser.sh` — watchable desktop Brave/Chrome, isolated profile | `RESEARCH_BROWSER_KEY` |
-| `egress: [...]` | — | extra allowed zones (a zone covers its subdomains) | — |
-| `egress_cidrs: [...]` | — | IP-range escape hatch (LAN subnets) | — |
+| Manifest key | Effect |
+|---|---|
+| `egress: [...]` | extra allowed zones (a zone covers its subdomains) |
+| `egress_cidrs: [...]` | IP-range escape hatch (LAN subnets) |
 
-Service tokens self-generate into `secrets.env` on each script's first run.
-A container without a grant cannot reach the host or the zone — enforced by
-the in-container firewall (dnsmasq resolver-driven ipset; rotating CDN DNS
-can't outrun it).
+A container without a grant cannot reach the zone — enforced by the
+in-container firewall (dnsmasq resolver-driven ipset; rotating CDN DNS can't
+outrun it).
 
-## Plugins (drop-in local MCP tools)
+> The old `gateway`/`proxyman`/`browser` capability flags are **plugins** now
+> (see below). `capabilities: {gateway: true}` still works for one release but
+> prints a deprecation warning — prefer `plugins: [gateway]`.
 
-Where capabilities are host-side services (port + secret) and remote MCP
-servers need a per-agent key, a **plugin** is the simplest kind of tool: a
-local stdio MCP server that runs entirely inside the container. One file —
-`plugins/<name>.yml` — describes everything about it:
+## Plugins (every MCP server is a file)
+
+A **plugin** is one file — `plugins/<name>.yml` — describing an MCP server a
+container can get. Listing its name in a manifest's `plugins:` wires it in;
+unlisted plugins stay dormant in the shared image. There are two shapes,
+distinguished by the entry itself (no `type:` field):
+
+**Local** — a stdio server that runs INSIDE the container (`command:`). Its
+`install:` runs at image build so the binary is present offline, and it wires
+into *every* installed MCP-capable agent.
 
 ```yaml
 install: |                     # runs at IMAGE BUILD (full network; offline after)
@@ -115,22 +119,47 @@ egress:                        # added to this container's firewall allowlist
   - blob.core.windows.net
 ```
 
+**Remote** — an HTTP server running on the Mac host (`url:`, no `install:`,
+nothing baked). `host_port:` folds into the firewall grant; `secrets:` names
+the token slot its headers reference. Wired into Claude's `.mcp.json` (the
+`${VAR}` ref expands from the shim env); the Mac-side service self-generates
+its token into `secrets.env` on first run.
+
+```yaml
+host_port: 8811                          # firewall grant for host.docker.internal:8811
+secrets:
+  MCP_GATEWAY_TOKEN: {scope: env, hint: "gateway (run run-gateway-coding.sh once)"}
+mcp:
+  coding:
+    url: http://host.docker.internal:8811/mcp
+    headers: {Authorization: "Bearer ${MCP_GATEWAY_TOKEN}"}
+```
+
+Shipped remote plugins (each needs its host service started once):
+
+| Plugin | Port | Mac-side service | Token |
+|---|---|---|---|
+| `gateway` | 8811 | `run-gateway-coding.sh` — headless Playwright via Docker MCP gateway | `MCP_GATEWAY_TOKEN` |
+| `proxyman` | 8813 | `run-proxyman-bridge.sh` — Proxyman traffic capture | `PROXYMAN_BRIDGE_KEY` |
+| `browser` | 8814 | `run-research-browser.sh` — watchable desktop Brave/Chrome, isolated profile | `RESEARCH_BROWSER_KEY` |
+
 Two independent axes, deliberately split:
 
-- **Baked (build, image-wide):** every plugin file's `install:` runs at image
-  build, so all plugin binaries live in the shared image and work offline
-  behind the runtime firewall. Adding a plugin = dropping a file + a rebuild —
-  no `Dockerfile` or `up.sh` edits.
+- **Baked (build, image-wide):** every *local* plugin's `install:` runs at
+  image build, so all plugin binaries live in the shared image and work offline
+  behind the runtime firewall (remote plugins bake nothing). Adding a plugin =
+  dropping a file + a rebuild — no `Dockerfile` or `up.sh` edits.
 - **Wired (up, per container):** a manifest opts in with `plugins: [serena]`;
-  `up.sh` hands that plugin's `mcp` to `src/wire_plugins.py` (baked into
-  the image; one `docker exec` with a JSON payload), which merges it into the
-  configs of every installed MCP-capable agent — claude's `.mcp.json` (pre-approved, like the other
-  generated servers), cursor-agent's / gemini's / pi's JSON configs, and a
+  `src/manifest.py` validates the plugin file and derives the wiring, and
+  `up.sh` hands it to `src/wire_plugins.py` (baked into the image; one
+  `docker exec` with a JSON payload). Local servers merge into every installed
+  MCP-capable agent — claude's `.mcp.json` (pre-approved, like the generated
+  obsidian server), cursor-agent's / gemini's / pi's JSON configs, and a
   managed `[mcp_servers.*]` block in codex's `config.toml` (aider has no MCP
   support; pi's config is inert until the pi-mcp-adapter extension is
-  installed) — and its `egress` into the firewall. De-listing a plugin also
-  removes its wiring on the next up. Containers that don't list it carry
-  the dormant binary and nothing else. One asymmetry: if the workspace repo
+  installed). Remote servers wire into claude's `.mcp.json` only (Phase 1).
+  Both fold their `egress`/`host_port` into the firewall. De-listing a plugin
+  removes its wiring on the next up. One asymmetry: if the workspace repo
   ships its own `.mcp.json`, claude keeps that file untouched (no plugin
   entries) while the other agents' home-dir configs are still wired.
 
@@ -223,9 +252,9 @@ Same system, same files, one addition. On any Linux box with Docker:
    rules, artifacts) behaves exactly the same.
 
 Never expose sshd publicly: keep the bind on loopback (or a tunnel
-interface) and front it with your WireGuard/VPN tunnel. Host MCP
-capabilities (`gateway`/`proxyman`/`browser`) are Mac-desktop services —
-on headless hosts leave them `false` or run the gateway service on that
+interface) and front it with your WireGuard/VPN tunnel. The remote MCP
+plugins (`gateway`/`proxyman`/`browser`) are Mac-desktop services — on
+headless hosts leave them out of `plugins:` or run the host service on that
 host.
 
 ## Remote agent access (phone / second device)

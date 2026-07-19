@@ -51,30 +51,34 @@ memory: 10g
 # Agent CLIs baked into the image. Omit this key entirely = all of them.
 tools: [claude, codex, pi, gemini, cursor, aider]
 
-# Capability grants. Each maps to a Mac-side service port, its secret in
-# secrets.env, the firewall rule, and a generated MCP entry for Claude Code.
-#   gateway  → 8811, MCP_GATEWAY_TOKEN     (run-gateway-coding.sh — headless Playwright)
-#   proxyman → 8813, PROXYMAN_BRIDGE_KEY   (run-proxyman-bridge.sh — traffic capture)
-#   browser  → 8814, RESEARCH_BROWSER_KEY  (run-research-browser.sh — watchable desktop browser)
+# Firewall egress. Extra outbound the base allowlist doesn't already cover.
 capabilities:
-  gateway: false
-  proxyman: false
-  browser: false
   egress: []                       # extra allowed outbound domains, e.g. [api.stripe.com]
   egress_cidrs: []                 # IP-range escape hatch, e.g. LAN subnets:
                                    #   [192.168.35.0/24, 192.168.20.0/24]
+# (The gateway/proxyman/browser flags that used to live here are DEPRECATED —
+#  they are plugins now. `capabilities: {gateway: true}` still works for one
+#  release but prints a warning; prefer `plugins: [gateway]` below.)
 
-# Baked-in plugins — local stdio MCP tools that run INSIDE the container (no
-# host service, no port, no secret; contrast with capabilities above). Each
-# name maps to plugins/<name>.yml in this repo: its binary is already baked
-# into the shared image at build; listing it here wires its MCP server into
-# EVERY installed MCP-capable agent — claude's .mcp.json (auto-approved),
-# cursor's/gemini's/pi's JSON configs, codex's config.toml (aider has no
-# MCP; pi's is inert until the pi-mcp-adapter extension is installed) — and
-# its egress domains into this container's firewall. Unlisted plugins stay
-# dormant in the image, and removing one here also removes its wiring on
-# the next up.
-#   plugins: [serena]              # semantic code retrieval + editing over LSP
+# Plugins — every MCP server a container can get is a plugins/<name>.yml file.
+# Listing a name here wires it into this container; unlisted plugins stay
+# dormant in the shared image.
+#
+# LOCAL plugins run stdio INSIDE the container (a binary baked at image build,
+# no host service, no secret) and wire into EVERY installed MCP-capable agent —
+# claude's .mcp.json (auto-approved), cursor's/gemini's/pi's JSON configs,
+# codex's config.toml (aider has no MCP; pi's is inert until the
+# pi-mcp-adapter extension is installed) — plus their egress into the firewall.
+#
+# REMOTE plugins are HTTP MCP servers running on the Mac host: up.sh grants the
+# firewall the host port and wires the server into Claude's .mcp.json, with the
+# service token delivered from secrets.env. Each needs its Mac-side service
+# started once (self-generates the token):
+#   gateway  → 8811, MCP_GATEWAY_TOKEN     (run-gateway-coding.sh — headless Playwright)
+#   proxyman → 8813, PROXYMAN_BRIDGE_KEY   (run-proxyman-bridge.sh — traffic capture)
+#   browser  → 8814, RESEARCH_BROWSER_KEY  (run-research-browser.sh — watchable desktop browser)
+#
+#   plugins: [serena, gateway]     # serena: code retrieval/editing over LSP (local)
 plugins: []
 
 # Per-agent identities — EXPLICIT references to secrets.env names.

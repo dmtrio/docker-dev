@@ -60,9 +60,10 @@ import sys
 
 # Both modules live in src/ and run host-side here (wire_plugins.py is ALSO
 # baked into the image, where it never imports this file) — the reserved-name
-# set and the capability→port table have exactly one home.
+# set has exactly one home. Host ports are DATA now (each remote plugin's
+# host_port:), not a table in code, so nothing is imported for them.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wire_plugins import CAPABILITY_PORTS, RESERVED_SERVER_NAMES
+from wire_plugins import RESERVED_SERVER_NAMES
 
 # \Z, not $: Python's $ also matches just before a trailing newline, which
 # would wave "evil.com\n" through into dnsmasq config (the old bash never saw
@@ -181,6 +182,29 @@ def _tool_installed(tools, name):
     return any(isinstance(t, str) and name in t for t in tools)
 
 
+def _parse_secret(val, plugin, slot):
+    """A plugin secret slot value: either a bare scope string ('env'/'agent')
+    or a map {scope: ..., hint: ...}. Returns (scope, hint). The hint is shown
+    verbatim in up.sh's 'not in secrets.env' warning, so it must be a single
+    line with no tab (PLUGIN_ENV_SECRETS is tab/newline-delimited)."""
+    if isinstance(val, str):
+        scope, hint = val, ""
+    elif isinstance(val, dict):
+        scope = val.get("scope")
+        hint = val.get("hint", "")
+        if not isinstance(hint, str):
+            raise ManifestError(f"plugin '{plugin}' secret '{slot}': hint must be a string")
+    else:
+        raise ManifestError(
+            f"plugin '{plugin}' secret '{slot}': must be a scope ('env'/'agent') or a map with a scope: key")
+    if scope not in ("env", "agent"):
+        raise ManifestError(
+            f"plugin '{plugin}' secret '{slot}': scope must be 'env' or 'agent' (got '{scope}')")
+    if "\t" in hint or "\n" in hint:
+        raise ManifestError(f"plugin '{plugin}' secret '{slot}': hint must be a single line (no tab/newline)")
+    return scope, hint
+
+
 class Derived(dict):
     """Ordered VAR → value string map with shell-quoted rendering."""
 
@@ -220,19 +244,29 @@ def derive(manifest, plugin_files, env):
                       ("INSTALL_CURSOR", "cursor"), ("INSTALL_AIDER", "aider")):
         out[var] = "true" if _tool_installed(tools, name) else "false"
 
-    # ── Capabilities ────────────────────────────────────────────────────
+    # ── Capabilities: egress firewall keys stay; gateway/proxyman/browser are
+    #    deprecated sugar for the equivalent plugins (PLN - Plugins v2). ──────
     caps = _section(manifest, "capabilities")
-    out["CAP_GATEWAY"] = _raw_flag(caps.get("gateway"), "capabilities.gateway")
-    out["CAP_PROXYMAN"] = _raw_flag(caps.get("proxyman"), "capabilities.proxyman")
-    out["CAP_BROWSER"] = _raw_flag(caps.get("browser"), "capabilities.browser")
     egress_items = _comma_list(caps.get("egress"), "capabilities.egress")
     cidr_items = _comma_list(caps.get("egress_cidrs"), "capabilities.egress_cidrs")
+    sugar_plugins = []
+    for cap in ("gateway", "proxyman", "browser"):
+        if _raw_flag(caps.get(cap), f"capabilities.{cap}") == "true":
+            sugar_plugins.append(cap)
+            print(f"  ⚠ capabilities.{cap}: true is deprecated — use plugins: [{cap}] "
+                  "instead (the capabilities: flag is sugar and will be removed)",
+                  file=sys.stderr)
 
     # ── Plugins list (aggregated errors, old order) ─────────────────────
     plugins_val = manifest.get("plugins")
     if not _falsy(plugins_val) and not isinstance(plugins_val, list):
         raise ManifestError("manifest plugins: must be a list, e.g. plugins: [serena]")
     plugins = _word_list(plugins_val, "plugins")
+    # capabilities: sugar appends the equivalent plugin names (dedup, explicit
+    # list first) so gateway/proxyman/browser flow through the one pipeline.
+    for cap in sugar_plugins:
+        if cap not in plugins:
+            plugins.append(cap)
     plugin_errors = []
     for p in plugins:
         if not NAME_RE.match(p):
@@ -319,11 +353,6 @@ def derive(manifest, plugin_files, env):
     out["OBS_REF_AGENTS"] = " ".join(f"{r}:{agent_for_ref(r)}" for r in obs_refs)
     out["WATCH_REF_AGENTS"] = " ".join(f"{r}:{agent_for_ref(r)}" for r in watch_refs)
 
-    # ── HOST_MCP_PORTS (from the shared capability table) ───────────────
-    out["HOST_MCP_PORTS"] = ",".join(
-        str(port) for cap, port in CAPABILITY_PORTS.items()
-        if out[f"CAP_{cap.upper()}"] == "true")
-
     # ── Egress fold: obsidian implies its endpoint; plugins add theirs ──
     def add_egress_domain(domain):
         if domain not in egress_items:
@@ -333,8 +362,14 @@ def derive(manifest, plugin_files, env):
         add_egress_domain(OBSIDIAN_HOST)
 
     # ── Per-plugin egress + mcp entry validation (fail-fast, old order) ─
+    # Each mcp server is local (command:) OR remote (url:) — the shape, not a
+    # type: field, decides. host_port: is legal only with a remote server;
+    # install: is required iff a local server (the Dockerfile bakes it).
     plugin_mcp_entries = []
     seen_server_names = set()
+    host_ports = []
+    env_slots = {}    # SLOT -> (plugin, hint)  for env-scoped secrets
+    agent_slots = {}  # SLOT -> plugin          declared now, bound in Phase 2
     for p in plugins:
         doc = plugin_files[p]
         if doc is None:
@@ -350,7 +385,9 @@ def derive(manifest, plugin_files, env):
         mcp = doc.get("mcp")
         mcp = {} if _falsy(mcp) else mcp
         if not isinstance(mcp, dict):
-            raise ManifestError(f"plugin '{p}' mcp must be a map of stdio servers")
+            raise ManifestError(f"plugin '{p}' mcp must be a map of MCP servers")
+        has_local = False
+        has_remote = False
         for n, spec in mcp.items():
             if not NAME_RE.match(n):
                 raise ManifestError(
@@ -359,20 +396,115 @@ def derive(manifest, plugin_files, env):
                 raise ManifestError(
                     f"plugin '{p}' mcp server '{n}': name is reserved for generated servers")
             spec = spec if isinstance(spec, dict) else {}
-            if not isinstance(spec.get("command"), str):
+            is_local = "command" in spec
+            is_remote = "url" in spec
+            if is_local and is_remote:
                 raise ManifestError(
-                    f"plugin '{p}' mcp server '{n}': command must be a string (local stdio server)")
-            extra = ",".join(k for k in spec if k not in ("command", "args"))
-            if extra:
+                    f"plugin '{p}' mcp server '{n}': set exactly one of command: (local stdio) or url: (remote http), not both")
+            if not is_local and not is_remote:
                 raise ManifestError(
-                    f"plugin '{p}' mcp server '{n}': unsupported field(s): {extra} (only command and args are wired, identically for every agent)")
+                    f"plugin '{p}' mcp server '{n}': needs command: (local stdio) or url: (remote http)")
+            if is_local:
+                has_local = True
+                if not isinstance(spec.get("command"), str):
+                    raise ManifestError(
+                        f"plugin '{p}' mcp server '{n}': command must be a string (local stdio server)")
+                extra = ",".join(k for k in spec if k not in ("command", "args"))
+                if extra:
+                    raise ManifestError(
+                        f"plugin '{p}' mcp server '{n}': unsupported field(s) for a local server: {extra} (only command and args)")
+            else:
+                has_remote = True
+                if not isinstance(spec.get("url"), str):
+                    raise ManifestError(
+                        f"plugin '{p}' mcp server '{n}': url must be a string (remote http server)")
+                headers = spec.get("headers", {})
+                if not isinstance(headers, dict) or not all(isinstance(v, str) for v in headers.values()):
+                    raise ManifestError(
+                        f"plugin '{p}' mcp server '{n}': headers must be a map of string values")
+                extra = ",".join(k for k in spec if k not in ("url", "headers"))
+                if extra:
+                    raise ManifestError(
+                        f"plugin '{p}' mcp server '{n}': unsupported field(s) for a remote server: {extra} (only url and headers)")
             if n in seen_server_names:
                 raise ManifestError(
                     f"multiple enabled plugins define the same MCP server name: {n}")
             seen_server_names.add(n)
+
+        install = doc.get("install")
+        if has_local and (_falsy(install) or not isinstance(install, str) or not install.strip()):
+            raise ManifestError(
+                f"plugin '{p}': a local (command:) server needs an install: block (baked into the image)")
+
+        hp = doc.get("host_port")
+        if not _falsy(hp):
+            if not has_remote:
+                raise ManifestError(
+                    f"plugin '{p}': host_port is only valid with a remote (url:) server")
+            if isinstance(hp, bool) or not isinstance(hp, int):
+                raise ManifestError(f"plugin '{p}': host_port must be an integer port number")
+            host_ports.append(hp)
+
+        secrets = doc.get("secrets")
+        secrets = {} if _falsy(secrets) else secrets
+        if not isinstance(secrets, dict):
+            raise ManifestError(f"plugin '{p}' secrets must be a map of SLOT: scope")
+        for slot, val in secrets.items():
+            if not REF_RE.match(slot):
+                raise ManifestError(
+                    f"plugin '{p}' secret slot '{slot}': illegal characters (must be a shell env var name)")
+            if slot in env_slots or slot in agent_slots:
+                raise ManifestError(f"secret slot '{slot}' is declared by more than one enabled plugin")
+            scope, hint = _parse_secret(val, p, slot)
+            if scope == "env":
+                env_slots[slot] = (p, hint)
+            else:
+                agent_slots[slot] = p
+
         # One line of compact JSON per plugin — the --build-payload contract.
         plugin_mcp_entries.append(json.dumps(mcp, separators=(",", ":"), ensure_ascii=False))
     out["PLUGIN_MCP_ENTRIES"] = "".join(e + "\n" for e in plugin_mcp_entries)
+    # Sorted + deduped so the firewall grant string is order-independent of the
+    # plugin list (the old CAPABILITY_PORTS table emitted 8811,8813,8814 in
+    # order) and two plugins sharing a port don't double up the grant.
+    out["HOST_MCP_PORTS"] = ",".join(str(p) for p in sorted(set(host_ports)))
+
+    # ── Env-scoped secret bindings (common_secrets) → required-secret plan ──
+    # up.sh composes VALUES (it has secrets.env; this module never sees them):
+    # each record is SLOT<tab>SOURCE<tab>HINT. A plugin env slot defaults to a
+    # same-named source var; common_secrets (map) re-points it, or (list)
+    # passes an extra var through by name.
+    common = manifest.get("common_secrets")
+    remap = {}
+    passthrough = []
+    if not _falsy(common):
+        if isinstance(common, list):
+            passthrough = _word_list(common, "common_secrets")
+        elif isinstance(common, dict):
+            for slot, source in common.items():
+                remap[slot] = _scalar(source, f"common_secrets.{slot}")
+        else:
+            raise ManifestError("manifest common_secrets: must be a list of names or a map of SLOT: source")
+    for slot, source in remap.items():
+        if slot in agent_slots:
+            raise ManifestError(
+                f"common_secrets slot '{slot}' is agent-scoped — bind it under agent_secrets, not common_secrets")
+        if slot not in env_slots:
+            raise ManifestError(
+                f"common_secrets slot '{slot}': no enabled plugin declares an env-scoped secret named '{slot}'")
+        if not REF_RE.match(source):
+            raise ManifestError(
+                f"common_secrets slot '{slot}': source '{source}' is not a valid env var name")
+    records = []
+    for slot, (plugin, hint) in env_slots.items():
+        records.append((slot, remap.get(slot, slot), hint))
+    for name in passthrough:
+        if name in env_slots:
+            continue  # already covered as a plugin slot
+        if not REF_RE.match(name):
+            raise ManifestError(f"common_secrets passthrough '{name}' is not a valid env var name")
+        records.append((name, name, ""))
+    out["PLUGIN_ENV_SECRETS"] = "".join(f"{s}\t{src}\t{h}\n" for s, src, h in records)
 
     # ── remote.notify: ntfy egress + env passthrough ────────────────────
     ntfy_url = ""

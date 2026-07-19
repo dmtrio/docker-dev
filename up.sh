@@ -92,19 +92,24 @@ rm -f "$KEYS_PATH"/*.env
 
 warn_missing() { echo "  ⚠ $1 not in secrets.env — $2 will not authenticate until set"; }
 
+# Env-scoped plugin secrets. manifest.py derived PLUGIN_ENV_SECRETS from the
+# enabled plugins' secrets: blocks (one SLOT<TAB>SOURCE<TAB>HINT record per
+# line). up.sh owns the VALUES — secrets.env is sourced above; manifest.py only
+# ever sees NAMES — so here we look up each SOURCE var (indirect expansion, no
+# eval) and write SLOT=<value> into common.env, or warn if it's unset. The
+# heredoc keeps the loop in this shell so the writes/warns aren't lost to a pipe
+# subshell.
 : > "$KEYS_PATH/common.env"
-if [ "$CAP_GATEWAY" = "true" ]; then
-    [ -n "${MCP_GATEWAY_TOKEN:-}" ] && echo "MCP_GATEWAY_TOKEN=$MCP_GATEWAY_TOKEN" >> "$KEYS_PATH/common.env" \
-        || warn_missing MCP_GATEWAY_TOKEN "gateway (run run-gateway-coding.sh once)"
-fi
-if [ "$CAP_PROXYMAN" = "true" ]; then
-    [ -n "${PROXYMAN_BRIDGE_KEY:-}" ] && echo "PROXYMAN_BRIDGE_KEY=$PROXYMAN_BRIDGE_KEY" >> "$KEYS_PATH/common.env" \
-        || warn_missing PROXYMAN_BRIDGE_KEY "proxyman (run run-proxyman-bridge.sh once)"
-fi
-if [ "$CAP_BROWSER" = "true" ]; then
-    [ -n "${RESEARCH_BROWSER_KEY:-}" ] && echo "RESEARCH_BROWSER_KEY=$RESEARCH_BROWSER_KEY" >> "$KEYS_PATH/common.env" \
-        || warn_missing RESEARCH_BROWSER_KEY "browser (run run-research-browser.sh once)"
-fi
+while IFS=$'\t' read -r slot source hint; do
+    [ -n "$slot" ] || continue
+    if [ -n "${!source:-}" ]; then
+        echo "$slot=${!source}" >> "$KEYS_PATH/common.env"
+    else
+        warn_missing "$source" "$hint"
+    fi
+done <<EOF
+$PLUGIN_ENV_SECRETS
+EOF
 [ -n "${GH_TOKEN:-}" ] && echo "GH_TOKEN=$GH_TOKEN" >> "$KEYS_PATH/common.env"
 chmod 600 "$KEYS_PATH/common.env"
 
@@ -328,8 +333,7 @@ done
 
 PAYLOAD=$(WIRE_CURSOR="$INSTALL_CURSOR" WIRE_GEMINI="$INSTALL_GEMINI" \
     WIRE_PI="$INSTALL_PI" WIRE_CODEX="$INSTALL_CODEX" \
-    CAP_GATEWAY="$CAP_GATEWAY" CAP_PROXYMAN="$CAP_PROXYMAN" \
-    CAP_BROWSER="$CAP_BROWSER" CAP_OBSIDIAN="$HAS_OBSIDIAN" \
+    CAP_OBSIDIAN="$HAS_OBSIDIAN" \
     PLUGIN_MCP_ENTRIES="$PLUGIN_MCP_ENTRIES" IDENTITY_AGENTS="$IDENTITY_AGENTS" \
     "$PYTHON3" "$SCRIPT_DIR/src/wire_plugins.py" --build-payload)
 
