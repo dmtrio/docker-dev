@@ -562,7 +562,19 @@ class TestPluginsV2Phase2(unittest.TestCase):
         with self.assertRaises(m.ManifestError) as cm:
             self._d({"plugins": ["obsidian-annotated"],
                      "agent_secrets": [{"agent": "claude", "slot": "OBSIDIAN_ANNOTATED_KEY", "secret": "OBSIDIAN_KEY_gone"}]})
-        self.assertIn("not found in /sec/secrets.env", str(cm.exception))
+        msg = str(cm.exception)
+        self.assertIn("not found in /sec/secrets.env", msg)
+        # names the source-var scope so a set-but-unscanned var isn't blamed as unset
+        self.assertIn("OBSIDIAN_KEY_* / OBSIDIAN_WATCH_KEY_*", msg)
+
+    def test_enabled_agent_plugin_without_binding_warns_inert(self):
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            d = self._d({"plugins": ["obsidian-annotated"]})  # no agent_secrets
+        self.assertEqual(d["AGENT_SECRETS"], "")
+        self.assertIn("inert (wired for no agent)", err.getvalue())
+        self.assertIn("OBSIDIAN_ANNOTATED_KEY", err.getvalue())
 
     def test_duplicate_agent_slot_binding_rejected(self):
         with self.assertRaises(m.ManifestError) as cm:

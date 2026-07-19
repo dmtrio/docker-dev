@@ -536,13 +536,27 @@ def derive(manifest, plugin_files, env):
             raise ManifestError(
                 f"agent_secrets: slot '{slot}' is not an agent-scoped secret of any enabled plugin")
         if source not in secret_vars:
+            # secret_vars is the set of OBSIDIAN_(WATCH_)?KEY_* vars up.sh
+            # scanned from secrets.env — name that scope so a set-but-unscanned
+            # source var reads as a scope limit, not "you forgot to set it".
             raise ManifestError(
-                f"agent_secrets: secret '{source}' (for {agent}/{slot}) not found in {secrets_file}")
+                f"agent_secrets: secret '{source}' (for {agent}/{slot}) not found in {secrets_file} "
+                "(agent_secrets sources must be OBSIDIAN_KEY_* / OBSIDIAN_WATCH_KEY_* vars in this release)")
         if (agent, slot) in seen_binds:
             raise ManifestError(f"agent_secrets: {agent} is bound to slot '{slot}' more than once")
         seen_binds.add((agent, slot))
         agent_secret_records.append((agent, slot, source))
     out["AGENT_SECRETS"] = "".join(f"{a}\t{s}\t{src}\n" for a, s, src in agent_secret_records)
+
+    # An enabled agent-scoped plugin with no binding is inert (wired for no
+    # agent) — and, if it has a server, opens egress nothing will reach. Warn
+    # rather than fail: listing the plugin without a binding may be deliberate.
+    bound_slots = {slot for _, slot, _ in agent_secret_records}
+    for slot, plugin in agent_slots.items():
+        if slot not in bound_slots:
+            print(f"  ⚠ plugin '{plugin}' declares agent-scoped slot {slot} but no "
+                  "agent_secrets binding enables it — it is inert (wired for no agent)",
+                  file=sys.stderr)
 
     # ── Env-scoped secret bindings (common_secrets) → required-secret plan ──
     # up.sh composes VALUES (it has secrets.env; this module never sees them):
