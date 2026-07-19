@@ -24,7 +24,25 @@ MODULE = Path(__file__).parent.parent / "src" / "manifest.py"
 SERENA = {"install": "x", "mcp": {"serena": {"command": "bash", "args": ["-lc", "s"]}},
           "egress": ["blob.core.windows.net"]}
 OTHER = {"install": "x", "mcp": {"other-tool": {"command": "python3"}}, "egress": []}
-PLUGIN_FILES = {"serena": SERENA, "other": OTHER}
+# Remote plugins (Plugins v2 Phase 1) — no install:, url: config + host_port +
+# an env-scoped secret slot. Mirror the shipped plugins/*.yml files.
+GATEWAY = {"host_port": 8811,
+           "secrets": {"MCP_GATEWAY_TOKEN": {"scope": "env",
+                       "hint": "gateway (run run-gateway-coding.sh once)"}},
+           "mcp": {"coding": {"url": "http://host.docker.internal:8811/mcp",
+                              "headers": {"Authorization": "Bearer ${MCP_GATEWAY_TOKEN}"}}}}
+PROXYMAN = {"host_port": 8813,
+            "secrets": {"PROXYMAN_BRIDGE_KEY": {"scope": "env",
+                        "hint": "proxyman (run run-proxyman-bridge.sh once)"}},
+            "mcp": {"proxyman": {"url": "http://host.docker.internal:8813/mcp",
+                                 "headers": {"X-API-Key": "${PROXYMAN_BRIDGE_KEY}"}}}}
+BROWSER = {"host_port": 8814,
+           "secrets": {"RESEARCH_BROWSER_KEY": {"scope": "env",
+                       "hint": "browser (run run-research-browser.sh once)"}},
+           "mcp": {"browser": {"url": "http://host.docker.internal:8814/mcp",
+                               "headers": {"X-API-Key": "${RESEARCH_BROWSER_KEY}"}}}}
+PLUGIN_FILES = {"serena": SERENA, "other": OTHER,
+                "gateway": GATEWAY, "proxyman": PROXYMAN, "browser": BROWSER}
 ENV = {"SECRET_KEY_VARS": "OBSIDIAN_KEY_me_claude OBSIDIAN_WATCH_KEY_w_pi",
        "SECRETS_FILE": "/sec/secrets.env"}
 
@@ -107,12 +125,26 @@ class TestErrorTable(unittest.TestCase):
     PLUGIN_MCP_CASES = [
         ("dot in server name", {"bad.name": {"command": "x"}},
          "plugin 'p' mcp server 'bad.name': illegal characters in name (allowed: letters, digits, underscore, dash — it becomes a TOML/JSON key)"),
-        ("reserved name", {"coding": {"command": "x"}},
-         "plugin 'p' mcp server 'coding': name is reserved for generated servers"),
+        # obsidian-annotated is the ONE remaining generated (reserved) name;
+        # coding/proxyman/browser are plugin data now, no longer reserved.
+        ("reserved name", {"obsidian-annotated": {"url": "http://x/mcp"}},
+         "plugin 'p' mcp server 'obsidian-annotated': name is reserved for generated servers"),
         ("non-string command", {"srv": {"command": 1}},
          "plugin 'p' mcp server 'srv': command must be a string (local stdio server)"),
-        ("extra field", {"srv": {"command": "x", "env": {"A": "b"}}},
-         "plugin 'p' mcp server 'srv': unsupported field(s): env (only command and args are wired, identically for every agent)"),
+        ("local extra field", {"srv": {"command": "x", "env": {"A": "b"}}},
+         "plugin 'p' mcp server 'srv': unsupported field(s) for a local server: env (only command and args)"),
+        ("neither command nor url", {"srv": {"args": ["x"]}},
+         "plugin 'p' mcp server 'srv': needs command: (local stdio) or url: (remote http)"),
+        ("both command and url", {"srv": {"command": "x", "url": "http://x/mcp"}},
+         "plugin 'p' mcp server 'srv': set exactly one of command: (local stdio) or url: (remote http), not both"),
+        ("non-string url", {"srv": {"url": 1}},
+         "plugin 'p' mcp server 'srv': url must be a string (remote http server)"),
+        ("remote headers not a map", {"srv": {"url": "http://x/mcp", "headers": ["a"]}},
+         "plugin 'p' mcp server 'srv': headers must be a map of string values"),
+        ("remote header non-string value", {"srv": {"url": "http://x/mcp", "headers": {"A": 1}}},
+         "plugin 'p' mcp server 'srv': headers must be a map of string values"),
+        ("remote extra field", {"srv": {"url": "http://x/mcp", "foo": "b"}},
+         "plugin 'p' mcp server 'srv': unsupported field(s) for a remote server: foo (only url and headers)"),
     ]
 
     def test_plugin_mcp_error_table(self):
@@ -134,8 +166,8 @@ class TestErrorTable(unittest.TestCase):
                     f"plugin 'p' egress entry '{bad}' is not a bare hostname (no scheme, path, port, or wildcard — a domain already covers its subdomains)")
 
     def test_duplicate_server_name_across_plugins(self):
-        files = {"a": {"mcp": {"srv": {"command": "x"}}},
-                 "b": {"mcp": {"srv": {"command": "y"}}}}
+        files = {"a": {"install": "x", "mcp": {"srv": {"command": "x"}}},
+                 "b": {"install": "x", "mcp": {"srv": {"command": "y"}}}}
         with self.assertRaises(m.ManifestError) as cm:
             derive({"plugins": ["a", "b"]}, plugin_files=files)
         self.assertEqual(str(cm.exception),
@@ -157,13 +189,18 @@ class TestYqSemanticsPins(unittest.TestCase):
         self.assertEqual(d["INSTALL_CLAUDE"], "true")   # jq contains() quirk
         self.assertEqual(d["INSTALL_CODEX"], "false")
 
-    def test_cap_flags_render_raw_scalars(self):
-        d = derive({"capabilities": {"gateway": "yes", "proxyman": 1, "browser": True}})
-        self.assertEqual(d["CAP_GATEWAY"], "yes")
-        self.assertEqual(d["CAP_PROXYMAN"], "1")
-        self.assertEqual(d["CAP_BROWSER"], "true")
-        # only the literal "true" opens host ports
-        self.assertEqual(d["HOST_MCP_PORTS"], "8814")
+    def test_capabilities_sugar_only_literal_true_maps_to_plugin(self):
+        # capabilities: gateway/proxyman/browser are deprecated sugar now; only
+        # the literal boolean true maps onto the plugin (yq `// false` raw-flag
+        # semantics preserved: "yes"/1 do NOT enable it).
+        files = {"gateway": GATEWAY, "proxyman": PROXYMAN, "browser": BROWSER}
+        d = derive({"capabilities": {"gateway": "yes", "proxyman": 1, "browser": True}},
+                   plugin_files=files)
+        self.assertEqual(d["PLUGINS"], "browser")          # only browser: true
+        self.assertEqual(d["HOST_MCP_PORTS"], "8814")      # browser's host_port
+        # the retired CAP_* variables are gone from the derived set
+        self.assertNotIn("CAP_GATEWAY", d)
+        self.assertNotIn("CAP_BROWSER", d)
 
     def test_agent_suffix_case_order(self):
         self.assertEqual(m.agent_for_ref("x_cursor_agent"), "cursor-agent")
@@ -190,9 +227,12 @@ class TestDerivedValues(unittest.TestCase):
         d = derive({"git": {"name": "M"}}, env=dict(ENV, GIT_NAME_DEFAULT="N"))
         self.assertEqual(d["GIT_USER_NAME"], "M")
 
-    def test_host_mcp_ports_combos(self):
-        d = derive({"capabilities": {"gateway": True, "browser": True}})
+    def test_host_mcp_ports_from_plugin_host_port_sorted(self):
+        # HOST_MCP_PORTS folds every enabled plugin's host_port, numerically
+        # sorted so the firewall grant is independent of plugin list order.
+        d = derive({"plugins": ["browser", "gateway"]})
         self.assertEqual(d["HOST_MCP_PORTS"], "8811,8814")
+        self.assertEqual(derive({"plugins": ["serena"]})["HOST_MCP_PORTS"], "")
 
     def test_obsidian_identity_implies_egress(self):
         d = derive({"identities": {"obsidian": ["me_claude"]}})
@@ -346,24 +386,27 @@ class TestReviewFixes(unittest.TestCase):
         self.assertIn("memory must be a single value", str(cm.exception))
 
     def test_reserved_names_full_set_shared_with_wire_plugins(self):
+        # Only obsidian-annotated is still generated; gateway/proxyman/browser's
+        # server names (coding/proxyman/browser) are plugin data now.
         self.assertEqual(set(wire_plugins.RESERVED_SERVER_NAMES),
-                         {"coding", "proxyman", "browser", "obsidian-annotated"})
+                         {"obsidian-annotated"})
         for name in wire_plugins.RESERVED_SERVER_NAMES:
             with self.subTest(name):
-                files = {"p": {"mcp": {name: {"command": "x"}}}}
+                files = {"p": {"install": "x", "mcp": {name: {"command": "x"}}}}
                 with self.assertRaises(m.ManifestError) as cm:
                     derive({"plugins": ["p"]}, plugin_files=files)
                 self.assertIn("reserved for generated servers", str(cm.exception))
 
-    def test_host_ports_and_urls_share_one_table(self):
-        for cap, port in wire_plugins.CAPABILITY_PORTS.items():
-            with self.subTest(cap):
-                d = derive({"capabilities": {cap: True}})
-                self.assertEqual(d["HOST_MCP_PORTS"], str(port))
-        # and the generated URLs use the same numbers
-        import inspect
-        src = inspect.getsource(wire_plugins.generate_claude_mcp)
-        self.assertIn("CAPABILITY_PORTS[", src)
+    def test_former_capability_server_names_are_no_longer_reserved(self):
+        # A plugin may now legitimately define coding/proxyman/browser (the
+        # shipped remote plugins do exactly that).
+        for name in ("coding", "proxyman", "browser"):
+            with self.subTest(name):
+                files = {"p": {"host_port": 9999,
+                               "mcp": {name: {"url": "http://host.docker.internal:9999/mcp"}}}}
+                d = derive({"plugins": ["p"]}, plugin_files=files)
+                self.assertEqual(json.loads(d["PLUGIN_MCP_ENTRIES"].strip()),
+                                 files["p"]["mcp"])
 
     def test_stdin_unreadable_sentinel_and_multidoc_hint(self):
         man, files = m.read_stdin_docs(io.StringIO('{}\nbroken\t!\n'))
@@ -371,6 +414,103 @@ class TestReviewFixes(unittest.TestCase):
         with self.assertRaises(m.ManifestError) as cm:
             m.read_stdin_docs(io.StringIO('{}\n{"second": "doc"}\n'))
         self.assertIn("stray '---'", str(cm.exception))
+
+
+class TestPluginsV2Phase1(unittest.TestCase):
+    """Local/remote inference, host_port, install-iff-local, secret slots,
+    common_secrets binding, and the capabilities: sugar."""
+
+    def test_remote_plugin_full_derivation(self):
+        d = derive({"plugins": ["gateway"]})
+        self.assertEqual(d["PLUGINS"], "gateway")
+        self.assertEqual(d["HOST_MCP_PORTS"], "8811")
+        self.assertEqual(json.loads(d["PLUGIN_MCP_ENTRIES"].strip()), GATEWAY["mcp"])
+        # env-scoped secret → one SLOT<tab>SOURCE<tab>HINT record
+        self.assertEqual(
+            d["PLUGIN_ENV_SECRETS"],
+            "MCP_GATEWAY_TOKEN\tMCP_GATEWAY_TOKEN\tgateway (run run-gateway-coding.sh once)\n")
+        # remote servers add no domain egress (they dial host.docker.internal)
+        self.assertEqual(d["EGRESS"], "")
+
+    def test_install_required_only_for_local_servers(self):
+        # local without install: → error
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["p"]},
+                   plugin_files={"p": {"mcp": {"s": {"command": "x"}}}})
+        self.assertIn("needs an install: block", str(cm.exception))
+        # remote without install: → fine
+        derive({"plugins": ["p"]},
+               plugin_files={"p": {"host_port": 9000, "mcp": {"s": {"url": "http://host.docker.internal:9000/mcp"}}}})
+        # egress-only plugin (no mcp) needs no install: either
+        derive({"plugins": ["p"]}, plugin_files={"p": {"egress": ["a.com"]}})
+
+    def test_host_port_only_with_remote_and_integer(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["p"]},
+                   plugin_files={"p": {"install": "x", "host_port": 8811,
+                                       "mcp": {"s": {"command": "x"}}}})
+        self.assertIn("host_port is only valid with a remote", str(cm.exception))
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["p"]},
+                   plugin_files={"p": {"host_port": "8811",
+                                       "mcp": {"s": {"url": "http://h/mcp"}}}})
+        self.assertIn("host_port must be an integer", str(cm.exception))
+        # out-of-range (typo like 88111) is a named error, not a bogus grant
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["p"]},
+                   plugin_files={"p": {"host_port": 88111,
+                                       "mcp": {"s": {"url": "http://h/mcp"}}}})
+        self.assertIn("out of range (1-65535)", str(cm.exception))
+
+    def test_secret_scope_validation(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["p"]},
+                   plugin_files={"p": {"secrets": {"TOK": "bogus"}}})
+        self.assertIn("scope must be 'env' or 'agent'", str(cm.exception))
+        # bare string scope form works
+        d = derive({"plugins": ["p"]},
+                   plugin_files={"p": {"secrets": {"TOK": "env"}}})
+        self.assertEqual(d["PLUGIN_ENV_SECRETS"], "TOK\tTOK\t\n")
+
+    def test_duplicate_secret_slot_across_plugins(self):
+        files = {"a": {"secrets": {"TOK": "env"}}, "b": {"secrets": {"TOK": "env"}}}
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["a", "b"]}, plugin_files=files)
+        self.assertIn("declared by more than one enabled plugin", str(cm.exception))
+
+    def test_common_secrets_map_repoints_env_slot(self):
+        d = derive({"plugins": ["gateway"], "common_secrets": {"MCP_GATEWAY_TOKEN": "GW_PROD"}})
+        self.assertEqual(
+            d["PLUGIN_ENV_SECRETS"],
+            "MCP_GATEWAY_TOKEN\tGW_PROD\tgateway (run run-gateway-coding.sh once)\n")
+
+    def test_common_secrets_list_passthrough(self):
+        d = derive({"plugins": ["serena"], "common_secrets": ["PLAYWRIGHT_KEY"]})
+        self.assertEqual(d["PLUGIN_ENV_SECRETS"], "PLAYWRIGHT_KEY\tPLAYWRIGHT_KEY\t\n")
+
+    def test_common_secrets_remap_unknown_slot_errors(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["serena"], "common_secrets": {"NOPE": "SRC"}})
+        self.assertIn("no enabled plugin declares an env-scoped secret", str(cm.exception))
+
+    def test_agent_scoped_slot_in_common_secrets_is_hard_error(self):
+        files = {"p": {"secrets": {"KEY": "agent"}}}
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["p"], "common_secrets": {"KEY": "SRC"}}, plugin_files=files)
+        self.assertIn("is agent-scoped", str(cm.exception))
+
+    def test_agent_scoped_slot_is_not_an_env_secret(self):
+        # declared, but not composed into PLUGIN_ENV_SECRETS (Phase 2 binds it)
+        d = derive({"plugins": ["p"]}, plugin_files={"p": {"secrets": {"KEY": "agent"}}})
+        self.assertEqual(d["PLUGIN_ENV_SECRETS"], "")
+
+    def test_capabilities_sugar_dedups_with_explicit_plugin(self):
+        d = derive({"plugins": ["gateway"], "capabilities": {"gateway": True}})
+        self.assertEqual(d["PLUGINS"], "gateway")   # not "gateway gateway"
+
+    def test_capabilities_sugar_appends_after_explicit(self):
+        d = derive({"plugins": ["serena"], "capabilities": {"browser": True, "gateway": True}})
+        self.assertEqual(d["PLUGINS"], "serena gateway browser")  # explicit, then sugar order
 
 
 if __name__ == "__main__":

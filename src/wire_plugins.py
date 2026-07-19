@@ -19,16 +19,20 @@ Payload:
 
     {
       "wire":         {"cursor": bool, "gemini": bool, "pi": bool, "codex": bool},
-      "capabilities": {"gateway": bool, "proxyman": bool, "browser": bool,
-                       "obsidian": bool},
-      "plugin_mcp_entries": [{"<name>": {"command": "...", "args": [...]}}, ...],
+      "capabilities": {"obsidian": bool},
+      "plugin_mcp_entries": [{"<name>": <local or remote spec>}, ...],
       "identities":   [{"agent": "cursor-agent", "key_env": "IDENTITY_KEY_0"}, ...]
     }
 
-- plugin_mcp_entries carries one object per enabled plugin (host-side yq
-  extracts them from plugins/<name>.yml). Cross-plugin duplicate server names
-  hard-fail here as well as host-side: both merges are last-wins, so a
-  collision must never silently replace an entry.
+- plugin_mcp_entries carries one object per enabled plugin (host-side
+  manifest.py extracts them from plugins/<name>.yml). A spec is LOCAL
+  ({command, args} — stdio, wired into every agent) or REMOTE ({url, headers}
+  — http, wired into Claude's .mcp.json only in Phase 1). Cross-plugin
+  duplicate server names hard-fail here as well as host-side: both merges are
+  last-wins, so a collision must never silently replace an entry.
+- capabilities carries only obsidian now (agent-scoped, migrates to a plugin in
+  Phase 2). gateway/proxyman/browser were capability flags before Phase 1 and
+  are plugin data now — they arrive via plugin_mcp_entries like any plugin.
 - Identity keys never ride in the payload: each identities[] element names an
   environment variable (set on the docker exec) that holds the key, so the
   payload itself is secret-free. Only cursor-agent/gemini/pi keys are shipped
@@ -52,18 +56,14 @@ from pathlib import Path
 
 OBSIDIAN_URL = "https://mcp-obsidian.dmetr.io/mcp"
 
-# Names of servers up.sh can generate into Claude's .mcp.json. A plugin
-# adopting one would silently last-wins-shadow a pre-approved or
-# identity-bearing entry (cursor/gemini/pi identities included — those never
-# pass through generate_claude_mcp's clash check). The host validates these
-# too, for fast failure BEFORE the image build; this check is the backstop.
-RESERVED_SERVER_NAMES = frozenset({"coding", "proxyman", "browser", "obsidian-annotated"})
-
-# Capability → host bridge port, in HOST_MCP_PORTS emission order. The ONLY
-# home of these numbers: the generated server URLs below and manifest.py's
-# HOST_MCP_PORTS (which imports this) both derive from it, so the firewall
-# grant and the URL an agent dials cannot disagree.
-CAPABILITY_PORTS = {"gateway": 8811, "proxyman": 8813, "browser": 8814}
+# Names of servers up.sh still GENERATES into Claude's .mcp.json (as opposed to
+# taking from a plugin file). A plugin adopting one would silently
+# last-wins-shadow the identity-bearing entry, so it is reserved. Only
+# obsidian-annotated remains generated; gateway/proxyman/browser became plugin
+# data in Plugins v2 Phase 1 (their server names — coding/proxyman/browser — are
+# now defined by plugins/*.yml and validated by the generic collision check).
+# obsidian-annotated retires from this set in Phase 2.
+RESERVED_SERVER_NAMES = frozenset({"obsidian-annotated"})
 
 # The codex managed block. Detection matches on the PREFIX (like the old sed
 # ranges did), so a stale block written by an older up.sh with different
@@ -114,6 +114,13 @@ def merge_plugin_entries(entries):
     for entry in entries:
         if not isinstance(entry, dict):
             raise WireError("plugin_mcp_entries must be JSON objects")
+        # Each value is a server spec; downstream (_claude_server /
+        # _local_plugins) keys local-vs-remote off `"command" in spec`, which
+        # would silently misclassify a non-dict (substring/membership match),
+        # so reject it here — the one choke point both wiring paths pass through.
+        for name, spec in entry.items():
+            if not isinstance(spec, dict):
+                raise WireError(f"plugin MCP server '{name}': spec must be a JSON object")
         dups.update(n for n in entry if n in merged)
         merged.update(entry)
     if dups:
@@ -128,6 +135,24 @@ def merge_plugin_entries(entries):
             + ", ".join(reserved)
         )
     return merged
+
+
+def _claude_server(spec):
+    """Render a plugin's mcp spec for Claude's .mcp.json. Local (stdio) servers
+    pass through verbatim ({command, args}); remote servers gain the explicit
+    `type: http` Claude expects, ahead of the file's {url, headers}."""
+    if "command" in spec:
+        return spec
+    return {"type": "http", **spec}
+
+
+def _local_plugins(plugins):
+    """The stdio (local) subset. Remote plugins are wired into Claude's
+    .mcp.json only (Phase 1): cursor/gemini can't expand ${VAR} refs in remote
+    headers, and their env-scoped service tokens were never wired there before
+    — so restricting the other agents to local plugins keeps every config
+    byte-identical to the pre-plugin capabilities era."""
+    return {n: s for n, s in plugins.items() if "command" in s}
 
 
 def _load_servers(path):
@@ -171,24 +196,6 @@ def generate_claude_mcp(workspace, caps, plugins):
         return
 
     servers = {}
-    if caps.get("gateway"):
-        servers["coding"] = {
-            "type": "http",
-            "url": f"http://host.docker.internal:{CAPABILITY_PORTS['gateway']}/mcp",
-            "headers": {"Authorization": "Bearer ${MCP_GATEWAY_TOKEN}"},
-        }
-    if caps.get("proxyman"):
-        servers["proxyman"] = {
-            "type": "http",
-            "url": f"http://host.docker.internal:{CAPABILITY_PORTS['proxyman']}/mcp",
-            "headers": {"X-API-Key": "${PROXYMAN_BRIDGE_KEY}"},
-        }
-    if caps.get("browser"):
-        servers["browser"] = {
-            "type": "http",
-            "url": f"http://host.docker.internal:{CAPABILITY_PORTS['browser']}/mcp",
-            "headers": {"X-API-Key": "${RESEARCH_BROWSER_KEY}"},
-        }
     if caps.get("obsidian"):
         servers["obsidian-annotated"] = {
             "type": "http",
@@ -196,14 +203,15 @@ def generate_claude_mcp(workspace, caps, plugins):
             "headers": {"Authorization": "Bearer ${OBSIDIAN_ANNOTATED_KEY}"},
         }
 
-    # A plugin adopting a generated name would silently shadow a pre-approved
-    # or identity-bearing entry (the merge below is last-wins) — hard-fail.
+    # A plugin adopting a generated name would silently shadow the
+    # identity-bearing entry (the merge below is last-wins) — hard-fail.
     clash = sorted(n for n in plugins if n in servers)
     if clash:
         raise WireError(
             "plugin MCP server name(s) collide with generated servers: " + ", ".join(clash)
         )
-    servers.update(plugins)
+    for name, spec in plugins.items():
+        servers[name] = _claude_server(spec)
 
     _write_atomic(mcp_path, _dump_json({"mcpServers": servers}))
     marker.touch()
@@ -410,28 +418,31 @@ def run(payload, home, workspace, env):
 
     # Runs for every installed agent even with no plugins enabled, so entries
     # from a plugin removed from the manifest are cleaned up, not orphaned
-    # (Claude gets this for free from wholesale .mcp.json regeneration).
+    # (Claude gets this for free from wholesale .mcp.json regeneration). Only
+    # LOCAL plugins go here: remote ones live in Claude's .mcp.json alone until
+    # Phase 2 gives cursor/gemini per-agent remote rendering.
+    local = _local_plugins(plugins)
     if wire.get("cursor"):
-        wire_plugin_servers_json(home / ".cursor" / "mcp.json", plugins)
+        wire_plugin_servers_json(home / ".cursor" / "mcp.json", local)
     if wire.get("gemini"):
-        wire_plugin_servers_json(home / ".gemini" / "settings.json", plugins)
+        wire_plugin_servers_json(home / ".gemini" / "settings.json", local)
     if wire.get("pi"):
-        wire_plugin_servers_json(home / ".pi" / "agent" / "mcp.json", plugins)
+        wire_plugin_servers_json(home / ".pi" / "agent" / "mcp.json", local)
         print("    (pi: inert until the pi-mcp-adapter extension is installed)")
     if wire.get("codex"):
-        wire_codex_toml(home / ".codex" / "config.toml", plugins)
+        wire_codex_toml(home / ".codex" / "config.toml", local)
 
 
 def build_payload(env):
     """Host side: assemble the payload from env vars set by up.sh.
 
-    Booleans arrive as the raw yq scalars (WIRE_CURSOR/…, CAP_GATEWAY/…) and
+    Booleans arrive as the raw yq scalars (WIRE_CURSOR/…, CAP_OBSIDIAN) and
     only the literal string "true" turns a flag on — the exact semantics of
-    the old `[ "$X" = "true" ]` checks, so a manifest `gateway: yes` or
-    `gateway: 1` stays off instead of flipping on or corrupting the JSON.
-    PLUGIN_MCP_ENTRIES is the newline-separated one-line-JSON-per-plugin
-    accumulation from yq; IDENTITY_AGENTS is space-separated "agent:KEY_ENV"
-    pairs (KEY_ENV empty for codex, whose key is deliberately never shipped).
+    the old `[ "$X" = "true" ]` checks, so a truthy-looking `yes`/`1` stays off
+    instead of flipping on or corrupting the JSON. PLUGIN_MCP_ENTRIES is the
+    newline-separated one-line-JSON-per-plugin accumulation from manifest.py;
+    IDENTITY_AGENTS is space-separated "agent:KEY_ENV" pairs (KEY_ENV empty for
+    codex, whose key is deliberately never shipped).
     """
     def flag(name):
         return env.get(name) == "true"
@@ -456,8 +467,9 @@ def build_payload(env):
     return {
         "wire": {name: flag("WIRE_" + name.upper())
                  for name in ("cursor", "gemini", "pi", "codex")},
-        "capabilities": {name: flag("CAP_" + name.upper())
-                         for name in ("gateway", "proxyman", "browser", "obsidian")},
+        # Only obsidian is still generated; gateway/proxyman/browser are plugins
+        # now and ride in plugin_mcp_entries (Plugins v2 Phase 1).
+        "capabilities": {"obsidian": flag("CAP_OBSIDIAN")},
         "plugin_mcp_entries": entries,
         "identities": identities,
     }
