@@ -198,8 +198,9 @@ def _parse_secret(val, plugin, slot):
         raise ManifestError(
             f"plugin '{plugin}' secret '{slot}': must be a scope ('env'/'agent') or a map with a scope: key")
     if scope not in ("env", "agent"):
+        got = "no scope:" if scope is None else f"'{scope}'"
         raise ManifestError(
-            f"plugin '{plugin}' secret '{slot}': scope must be 'env' or 'agent' (got '{scope}')")
+            f"plugin '{plugin}' secret '{slot}': scope must be 'env' or 'agent' (got {got})")
     if "\t" in hint or "\n" in hint:
         raise ManifestError(f"plugin '{plugin}' secret '{slot}': hint must be a single line (no tab/newline)")
     return scope, hint
@@ -443,6 +444,8 @@ def derive(manifest, plugin_files, env):
                     f"plugin '{p}': host_port is only valid with a remote (url:) server")
             if isinstance(hp, bool) or not isinstance(hp, int):
                 raise ManifestError(f"plugin '{p}': host_port must be an integer port number")
+            if not 1 <= hp <= 65535:
+                raise ManifestError(f"plugin '{p}': host_port {hp} out of range (1-65535)")
             host_ports.append(hp)
 
         secrets = doc.get("secrets")

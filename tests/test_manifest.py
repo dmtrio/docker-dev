@@ -455,6 +455,12 @@ class TestPluginsV2Phase1(unittest.TestCase):
                    plugin_files={"p": {"host_port": "8811",
                                        "mcp": {"s": {"url": "http://h/mcp"}}}})
         self.assertIn("host_port must be an integer", str(cm.exception))
+        # out-of-range (typo like 88111) is a named error, not a bogus grant
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"plugins": ["p"]},
+                   plugin_files={"p": {"host_port": 88111,
+                                       "mcp": {"s": {"url": "http://h/mcp"}}}})
+        self.assertIn("out of range (1-65535)", str(cm.exception))
 
     def test_secret_scope_validation(self):
         with self.assertRaises(m.ManifestError) as cm:

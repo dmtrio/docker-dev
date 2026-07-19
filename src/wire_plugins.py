@@ -114,6 +114,13 @@ def merge_plugin_entries(entries):
     for entry in entries:
         if not isinstance(entry, dict):
             raise WireError("plugin_mcp_entries must be JSON objects")
+        # Each value is a server spec; downstream (_claude_server /
+        # _local_plugins) keys local-vs-remote off `"command" in spec`, which
+        # would silently misclassify a non-dict (substring/membership match),
+        # so reject it here — the one choke point both wiring paths pass through.
+        for name, spec in entry.items():
+            if not isinstance(spec, dict):
+                raise WireError(f"plugin MCP server '{name}': spec must be a JSON object")
         dups.update(n for n in entry if n in merged)
         merged.update(entry)
     if dups:

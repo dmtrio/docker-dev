@@ -64,6 +64,13 @@ class TestMergePluginEntries(unittest.TestCase):
             wire_plugins.merge_plugin_entries(entries)
         self.assertIn("plugin_mcp_entries must be JSON objects", str(cm.exception))
 
+    def test_non_dict_server_spec_raises_wireerror(self):
+        """A non-dict server spec is rejected here (the choke point), so the
+        local/remote classifiers never substring-match a non-dict downstream."""
+        with self.assertRaises(wire_plugins.WireError) as cm:
+            wire_plugins.merge_plugin_entries([{"srv": "commandline"}])
+        self.assertIn("spec must be a JSON object", str(cm.exception))
+
 
 class TestGenerateClaudeMcp(QuietTestCase):
     """Tests for generate_claude_mcp function."""
