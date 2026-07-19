@@ -219,6 +219,16 @@ grep -qF "for a in $SHIM_LIST; do" Dockerfile \
     && grep -qF "SHIM_AGENTS=\"$SHIM_LIST\"" update-agent-keys.sh \
     && pass "shim-agent list matches across Dockerfile, up.sh, update-agent-keys.sh" \
     || fail "shim-agent list drifted (Dockerfile ↔ up.sh ↔ update-agent-keys.sh)"
+# ...and it must set-equal manifest.py's AGENT_NAMES (the agents agent_secrets
+# may bind). If they drift, a bound agent could get a file with no shared block
+# — or a shim agent could be un-bindable.
+if command -v python3 >/dev/null; then
+    AGENT_NAMES_SORTED=$(python3 -c 'import sys; sys.path.insert(0,"src"); import manifest; print(" ".join(sorted(manifest.AGENT_NAMES)))')
+    SHIM_SORTED=$(printf '%s\n' $SHIM_LIST | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+    [ "$AGENT_NAMES_SORTED" = "$SHIM_SORTED" ] \
+        && pass "manifest.py AGENT_NAMES set-equals the shim-agent list" \
+        || fail "AGENT_NAMES ($AGENT_NAMES_SORTED) != shim agents ($SHIM_SORTED)"
+fi
 # common.env is retired: up.sh must no longer WRITE it (the shim keeps a
 # transitional [ -f ] guard, so the Dockerfile reference is expected).
 grep -qE 'common\.env" *$|>> "\$KEYS_PATH/common.env"|> "\$KEYS_PATH/common.env"' up.sh \

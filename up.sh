@@ -117,7 +117,12 @@ done <<EOF
 $PLUGIN_ENV_SECRETS
 EOF
 [ -n "${GH_TOKEN:-}" ] && SHARED="${SHARED}GH_TOKEN=$GH_TOKEN"$'\n'
-for a in $SHIM_AGENTS; do printf '%s' "$SHARED" > "$KEYS_PATH/$a.env"; done
+# chmod 600 as each file is created — it already holds secret values, so don't
+# leave it at the umask default even for the window until the trailing chmod
+# (KEYS_PATH is 700, but keep the file-level guarantee too).
+for a in $SHIM_AGENTS; do
+    printf '%s' "$SHARED" > "$KEYS_PATH/$a.env"; chmod 600 "$KEYS_PATH/$a.env"
+done
 
 # Agent-scoped plugin secrets. manifest.py derived AGENT_SECRETS (one
 # agent<TAB>slot<TAB>source record per line) from agent_secrets bindings — and
