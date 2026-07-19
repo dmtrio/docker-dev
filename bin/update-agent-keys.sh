@@ -17,8 +17,9 @@
 #   ./bin/update-agent-keys.sh mysite pi OBSIDIAN_ANNOTATED_KEY      # pi's own key
 #   ./bin/update-agent-keys.sh mysite common MCP_GATEWAY_TOKEN       # all agents
 #
-# Agents: claude, pi, gemini, cursor-agent (or 'common' for shared
-# capability tokens like the gateway/bridge secrets).
+# Agents: claude, pi, gemini, cursor-agent, codex (or 'common' to set the var
+# in EVERY agent's file at once — common.env was retired in Phase 3, so each
+# agent now carries one complete env file).
 
 set -e
 
@@ -66,20 +67,31 @@ if [ -z "$VALUE" ]; then
     echo ""
 fi
 
-FILE="$KEYS_PATH/$AGENT.env"
-touch "$FILE"
-chmod 600 "$FILE"
+# Set VAR=VALUE (or remove VAR when VALUE is empty) in one agent's env file,
+# idempotently (drop any existing line first, mode 600 throughout).
+set_var_in() {
+    local file="$1" tmp="$1.tmp.$$"
+    touch "$file"; chmod 600 "$file"
+    grep -v "^$VAR=" "$file" > "$tmp" || true
+    [ -n "$VALUE" ] && echo "$VAR=$VALUE" >> "$tmp"
+    mv "$tmp" "$file"; chmod 600 "$file"
+}
 
-TMP="$FILE.tmp.$$"
-grep -v "^$VAR=" "$FILE" > "$TMP" || true
-if [ -n "$VALUE" ]; then
-    echo "$VAR=$VALUE" >> "$TMP"
-fi
-mv "$TMP" "$FILE"
-chmod 600 "$FILE"
-
-if [ -n "$VALUE" ]; then
-    echo "✓ $VAR set for $CONTAINER/$AGENT — applies on that agent's next start"
+# common.env is retired (Plugins v2 Phase 3): each agent has one complete env
+# file, so 'common' now means "every shim agent" — a per-agent override of a
+# shared token, applied across all of them at once. SHIM_AGENTS must match the
+# Dockerfile shim loop and up.sh.
+SHIM_AGENTS="claude pi gemini cursor-agent codex"
+if [ "$AGENT" = common ]; then
+    for a in $SHIM_AGENTS; do set_var_in "$KEYS_PATH/$a.env"; done
+    TARGET="all agents"
 else
-    echo "✓ $VAR removed for $CONTAINER/$AGENT"
+    set_var_in "$KEYS_PATH/$AGENT.env"
+    TARGET="$AGENT"
+fi
+
+if [ -n "$VALUE" ]; then
+    echo "✓ $VAR set for $CONTAINER/$TARGET — applies on next start"
+else
+    echo "✓ $VAR removed for $CONTAINER/$TARGET"
 fi
