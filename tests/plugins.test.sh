@@ -253,6 +253,17 @@ grep -qF -- "config-only, nothing to bake" Dockerfile \
 grep -qF -- "COPY src/wire_plugins.py" Dockerfile \
     && pass "Dockerfile bakes src/wire_plugins.py into the image" \
     || fail "Dockerfile no longer bakes wire_plugins.py (up.sh execs it)"
+# up.sh sources the extracted key-composition helper and calls it (the logic is
+# unit-tested by tests/bash.test.sh; this pin proves up.sh still wires to it).
+grep -qF -- '. "$SCRIPT_DIR/src/compose-keys.sh"' up.sh \
+    && grep -qF -- 'compose_keys "$KEYS_PATH"' up.sh \
+    && pass "up.sh sources + calls src/compose-keys.sh" \
+    || fail "up.sh no longer wires to src/compose-keys.sh (update this suite!)"
+
+echo "── host-side bash unit tests (tests/bash.test.sh) ──"
+BASH_OUT=$(bash "$SCRIPT_DIR/tests/bash.test.sh" 2>&1) \
+    && pass "tests/bash.test.sh" \
+    || { fail "bash unit tests failed:"; printf '%s\n' "$BASH_OUT" | tail -30; }
 
 echo ""
 if [ "$FAILURES" -gt 0 ]; then
