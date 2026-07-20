@@ -17,7 +17,7 @@
 host_port: 8811                        # folds into HOST_MCP_PORTS (firewall grant)
 
 # Secret slots this plugin's headers reference. `env` scope = one value shared
-# by every agent, delivered via the shims' common.env. `hint` is shown verbatim
+# by every agent, delivered via each shim's <agent>.env. `hint` is shown verbatim
 # in up.sh's "not in secrets.env" warning when the source var is unset.
 secrets:
   MCP_GATEWAY_TOKEN: {scope: env, hint: "gateway (run bin/run-gateway-coding.sh once)"}

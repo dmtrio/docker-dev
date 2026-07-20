@@ -13,8 +13,11 @@ credentials from it according to each manifest.
 
 All the scripts below source `src/common.sh` (not run directly), which resolves the
 "dev-agent home" — where secrets/keys/artifacts live. It defaults to a
-gitignored `./.dev-agent/`; override via `DEV_AGENT_HOME` / `RULES_PATH` in a
-gitignored `./.env` at the repo root (keeps your own setup working).
+gitignored `./.dev-agent/`; override via `DEV_AGENT_HOME` / `RULES_PATH` /
+`CONTAINERS_PATH` in a gitignored `./.env` at the repo root (keeps your own
+setup working). `CONTAINERS_PATH` is where `containers/<name>.yml` manifests
+are read from — it defaults to `$DEV_AGENT_HOME/containers` when that exists,
+so your real manifests can live outside this repo.
 
 ---
 

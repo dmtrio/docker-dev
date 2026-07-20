@@ -6,7 +6,7 @@
 #
 # up.sh grants firewall access to host_port and wires `mcp` into Claude's
 # .mcp.json. The key is container-wide (env-scoped): every agent presents the
-# same value, delivered via the shims' common.env.
+# same value, delivered via each shim's <agent>.env.
 #
 # Migrated from the old `capabilities: {browser: true}` flag (PLN - Plugins v2,
 # Phase 1); `capabilities:` still works as deprecated sugar for one release.

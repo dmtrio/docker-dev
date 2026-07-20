@@ -10,8 +10,10 @@
 #
 # The live change is EPHEMERAL (lost when the container is recreated). At the
 # end you're asked where to persist it:
-#   yml       → containers/<name>.yml  capabilities.egress  (this container, next ./up.sh)
-#   firewall  → init-firewall.sh base ALLOWED_ZONES         (ALL containers, next build)
+#   yml       → the container's manifest, capabilities.egress (this container,
+#               next ./up.sh) — resolved via CONTAINERS_PATH, so not necessarily
+#               inside this repo
+#   firewall  → src/init-firewall.sh base ALLOWED_ZONES (ALL containers, next build)
 #   none      → live only
 # Pass --save <target> to skip the prompt.
 #
@@ -32,7 +34,7 @@ while [ $# -gt 0 ]; do
         --save) SAVE="${2:-}"; shift 2 ;;
         --save=*) SAVE="${1#--save=}"; shift ;;
         -h|--help)
-            sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         -*) echo "Error: unknown flag '$1'"; exit 1 ;;
         *)
@@ -171,9 +173,11 @@ save_firewall() {
 
 if [ -z "$SAVE" ]; then
     echo "Persist permanently? (the live change above is lost when the container is recreated)"
-    echo "  [y] manifest  $MANIFEST   → this container, next ./up.sh"
-    echo "  [f] firewall  init-firewall.sh        → ALL containers, next build"
-    echo "  [s] skip                              → live only"
+    # $MANIFEST is a full path of unknown width, so these are listed one per
+    # line rather than column-aligned against it.
+    echo "  [y] manifest  → this container, next ./up.sh   ($MANIFEST)"
+    echo "  [f] firewall  → ALL containers, next build     (src/init-firewall.sh)"
+    echo "  [s] skip      → live only"
     printf "Choice [y/f/s]: "
     read -r ans
     case "$ans" in

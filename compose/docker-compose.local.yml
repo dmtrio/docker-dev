@@ -63,9 +63,10 @@ services:
       - ${ARTIFACTS_PATH}:/artifacts
 
       # ── Per-agent MCP credentials (edit host-side, live in container) ─────
-      # <keys>/common.env = capability tokens (gateway, bridges);
-      # <keys>/<agent>.env = that agent's identity keys. Loaded by the
-      # agent-identity shims at process start — changes apply on next launch.
+      # <keys>/<agent>.env = one complete env file per agent: the shared
+      # plugin tokens (gateway, bridges) plus that agent's own identity keys.
+      # Loaded by the agent-identity shims at process start — changes apply
+      # on next launch.
       - ${KEYS_PATH}:/home/coder/.agent-keys:ro
 
       # ── Shared knowledge, never shared identity ───────────────────────────

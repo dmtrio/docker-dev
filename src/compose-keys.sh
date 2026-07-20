@@ -49,7 +49,9 @@ EOF
     done
 
     # Append each bound agent's own agent-scoped secrets (after the shared
-    # block, so they win on a name collision).
+    # block, so they win on a name collision). No warn_missing here — unlike
+    # the shared slots above, an agent_secrets source var that isn't in
+    # secrets.env is a hard error in manifest.py, so it can't reach this loop.
     while IFS=$'\t' read -r agent slot src; do
         [ -n "$agent" ] || continue
         echo "$slot=${!src}" >> "$keys_dir/$agent.env"

@@ -22,7 +22,19 @@ assert_contains() { case "$2" in *"$3"*) pass "$1" ;; *) fail "$1"; printf '    
 assert_absent() { case "$2" in *"$3"*) fail "$1"; printf '     unexpected [%s] in: [%s]\n' "$3" "$2" ;; *) pass "$1" ;; esac; }
 mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
 
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+# pwd -P so WORK matches what common.sh computes for CDD_ROOT: it resolves
+# symlinks, and macOS puts mktemp dirs under /var/folders (/var → private/var),
+# which would make every path-equality assertion below fail on a Mac.
+WORK=$(cd "$(mktemp -d)" && pwd -P); trap 'rm -rf "$WORK"' EXIT
+
+# A sandbox copy of the scripts under test, laid out exactly like the repo
+# (bin/ + src/) but with NO ./.env. The scripts that resolve a dev-agent home
+# source src/common.sh, which reads the repo root's ./.env BEFORE honouring
+# $DEV_AGENT_HOME — so running them from $REPO on a machine that has the
+# documented `DEV_AGENT_HOME=...` in ./.env would ignore our sandbox and write
+# to the user's REAL keys/secrets. Running them from here can't.
+SBOX="$WORK/repo"; mkdir -p "$SBOX/bin" "$SBOX/src"
+cp "$REPO"/bin/*.sh "$SBOX/bin/"; cp "$REPO"/src/common.sh "$SBOX/src/"
 
 # ────────────────────────────────────────────────────────────────────────────
 echo "── src/compose-keys.sh ──"
@@ -93,7 +105,7 @@ assert_eq "CONTAINERS_PATH env override wins over everything" "/my/private/manif
 
 # ────────────────────────────────────────────────────────────────────────────
 echo "── allow-egress.sh ──"
-run_ae() { ( cd "$REPO" && PATH="$WORK/aebin:$PATH" bash bin/allow-egress.sh "$@" ) 2>&1; }
+run_ae() { ( cd "$SBOX" && env CONTAINERS_PATH="$WORK/no-such-manifests" PATH="$WORK/aebin:$PATH" bash bin/allow-egress.sh "$@" ) 2>&1; }
 # docker mock: inspect succeeds (container "exists"), reports NOT running so the
 # live-apply path is skipped; ps -a prints nothing.
 mkdir -p "$WORK/aebin"
@@ -129,7 +141,7 @@ assert_contains "valid domain echoed" "$out" "Domains:   cdn.playwright.dev"
 # ────────────────────────────────────────────────────────────────────────────
 echo "── update-agent-keys.sh ──"
 DAH="$WORK/dah"; KP="$DAH/keys/mysite"; mkdir -p "$KP"
-uak() { ( cd "$REPO" && env DEV_AGENT_HOME="$DAH" bash bin/update-agent-keys.sh "$@" ) ; }
+uak() { ( cd "$SBOX" && env DEV_AGENT_HOME="$DAH" bash bin/update-agent-keys.sh "$@" ) ; }
 
 uak mysite claude OBSIDIAN_ANNOTATED_KEY sekret >/dev/null
 assert_eq "set writes VAR to <agent>.env" "OBSIDIAN_ANNOTATED_KEY=sekret" "$(cat "$KP/claude.env")"
@@ -165,7 +177,7 @@ MOCK
 chmod +x "$WORK/rbin/openssl" "$WORK/rbin/docker"
 
 RDAH="$WORK/rdah"; mkdir -p "$RDAH"; SEC="$RDAH/secrets.env"
-run_svc() { ( cd "$REPO" && env DEV_AGENT_HOME="$RDAH" DOCKER_LOG="$WORK/dockerlog" PATH="$WORK/rbin:$PATH" bash "$1" ) ; }
+run_svc() { ( cd "$SBOX" && env DEV_AGENT_HOME="$RDAH" DOCKER_LOG="$WORK/dockerlog" PATH="$WORK/rbin:$PATH" bash "$1" ) ; }
 
 : > "$WORK/dockerlog"
 run_svc bin/run-gateway-coding.sh >/dev/null 2>&1 || true
