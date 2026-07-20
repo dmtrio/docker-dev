@@ -48,7 +48,7 @@ one** of `command:` (local) or `url:` (remote).
 install: |
   uv tool install -p 3.13 serena-agent
 mcp:
-  serena: {command: bash, args: [-c, 'exec serena start-mcp-server --project "$PWD"']}
+  serena: {command: bash, args: [-c, 'exec serena start-mcp-server --context ide-assistant --project "$PWD"']}
 egress: [blob.core.windows.net]
 ```
 
