@@ -205,7 +205,12 @@ REMOTE_TMUX="$REMOTE_TMUX" \
 MOSH_PORTS="$MOSH_PORTS" MOSH_PORTS_DASH="$MOSH_PORTS_DASH" \
 NTFY_URL="$CONTAINER_NTFY_URL" NTFY_TOPIC="$CONTAINER_NTFY_TOPIC" \
 IMAGE_TAG="$NAME" \
-docker compose -p "dev-agent-$NAME" $COMPOSE_FILES up -d --build
+# --project-directory pins relative paths in the compose files (notably the
+# build context) to the repo root. Without it compose derives the project
+# directory from the first -f file, i.e. compose/, and the build context
+# resolves to compose/ — where there is no Dockerfile.
+docker compose -p "dev-agent-$NAME" --project-directory "$SCRIPT_DIR" \
+    $COMPOSE_FILES up -d --build
 
 # ── Wait for entrypoint/firewall ──────────────────────────────────────────────
 # Crash-loop detection compares against the restart count captured now (0 for
