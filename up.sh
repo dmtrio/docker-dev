@@ -19,9 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 NAME="$1"
 if [ -z "$NAME" ]; then
-    echo "Usage: ./up.sh <name>    (reads containers/<name>.yml)"
+    echo "Usage: ./up.sh <name>    (reads $CONTAINERS_PATH/<name>.yml)"
     echo "Manifests:"
-    for f in "$SCRIPT_DIR/containers"/*.yml; do
+    for f in "$CONTAINERS_PATH"/*.yml; do
         [ -f "$f" ] || continue
         n=$(basename "$f" .yml)
         [ "$n" = "TEMPLATE" ] && continue
@@ -30,8 +30,11 @@ if [ -z "$NAME" ]; then
     exit 1
 fi
 
-MANIFEST="$SCRIPT_DIR/containers/$NAME.yml"
-[ -f "$MANIFEST" ] || { echo "Error: no manifest at $MANIFEST (cp containers/TEMPLATE.yml)"; exit 1; }
+# CONTAINERS_PATH (resolved in common.sh) is where manifests live: the repo's
+# containers/ by default, or $BASE_PATH/containers / a CONTAINERS_PATH override
+# when you keep them in a private repo outside this one.
+MANIFEST="$CONTAINERS_PATH/$NAME.yml"
+[ -f "$MANIFEST" ] || { echo "Error: no manifest at $MANIFEST (cp $SCRIPT_DIR/containers/TEMPLATE.yml $MANIFEST)"; exit 1; }
 command -v yq >/dev/null || { echo "Error: yq required (brew install yq)"; exit 1; }
 # Host python3 (stdlib-only, builds the wiring payload): prefer the SYSTEM
 # interpreter over whatever shim leads $PATH — pyenv/homebrew pythons can be
@@ -90,43 +93,16 @@ KEYS_PATH="$BASE_PATH/keys/$NAME"
 mkdir -p "$KEYS_PATH"; chmod 700 "$KEYS_PATH"
 rm -f "$KEYS_PATH"/*.env
 
-warn_missing() { echo "  ⚠ $1 not in secrets.env — $2 will not authenticate until set"; }
-
-# Env-scoped plugin secrets. manifest.py derived PLUGIN_ENV_SECRETS from the
-# enabled plugins' secrets: blocks (one SLOT<TAB>SOURCE<TAB>HINT record per
-# line). up.sh owns the VALUES — secrets.env is sourced above; manifest.py only
-# ever sees NAMES — so here we look up each SOURCE var (indirect expansion, no
-# eval) and write SLOT=<value> into common.env, or warn if it's unset. The
-# heredoc keeps the loop in this shell so the writes/warns aren't lost to a pipe
-# subshell.
-: > "$KEYS_PATH/common.env"
-while IFS=$'\t' read -r slot source hint; do
-    [ -n "$slot" ] || continue
-    if [ -n "${!source:-}" ]; then
-        echo "$slot=${!source}" >> "$KEYS_PATH/common.env"
-    else
-        warn_missing "$source" "$hint"
-    fi
-done <<EOF
-$PLUGIN_ENV_SECRETS
-EOF
-[ -n "${GH_TOKEN:-}" ] && echo "GH_TOKEN=$GH_TOKEN" >> "$KEYS_PATH/common.env"
-chmod 600 "$KEYS_PATH/common.env"
-
-# Agent-scoped plugin secrets. manifest.py derived AGENT_SECRETS (one
-# agent<TAB>slot<TAB>source record per line) from agent_secrets bindings — and
-# from the deprecated identities: sugar. Each bound agent gets its OWN key
-# written into its <agent>.env (indirect expansion, no eval; the source var's
-# presence was validated by manifest.py). This covers both obsidian keys (a
-# server the wiring step then renders per agent) and env-only watch keys (no
-# server — delivery into the shim env is the whole point).
-while IFS=$'\t' read -r agent slot source; do
-    [ -n "$agent" ] || continue
-    echo "$slot=${!source}" >> "$KEYS_PATH/$agent.env"
-done <<EOF
-$AGENT_SECRETS
-EOF
-for f in "$KEYS_PATH"/*.env; do [ -f "$f" ] && chmod 600 "$f"; done
+# One COMPLETE env file per shim agent (Plugins v2 Phase 3 — common.env retired).
+# Each shim (baked into the image; SHIM_AGENTS must match the Dockerfile loop)
+# sources only its own <agent>.env, so that file carries everything the agent
+# sees. The composition logic lives in src/keyfiles.sh (sourced here, and
+# unit-tested by tests/bash.test.sh) so the real code is exercised in tests, not
+# mirrored; up.sh only routes the derived vars (NAMES) into it — the ${!source}
+# value lookups happen against the secrets.env this shell already sourced.
+SHIM_AGENTS="claude pi gemini cursor-agent codex"
+. "$SCRIPT_DIR/src/keyfiles.sh"
+write_keyfiles "$KEYS_PATH" "$SHIM_AGENTS" "$PLUGIN_ENV_SECRETS" "$AGENT_SECRETS"
 
 # ── Host paths + platform ─────────────────────────────────────────────────────
 ARTIFACTS_PATH="$BASE_PATH/artifacts/$NAME"
@@ -183,7 +159,7 @@ else
 fi
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
-echo "Applying containers/$NAME.yml → dev-agent-$NAME"
+echo "Applying $MANIFEST → dev-agent-$NAME"
 REMOTE_SUMMARY=""
 [ "$REMOTE_TMUX" = "true" ] && REMOTE_SUMMARY="tmux"
 [ "$REMOTE_MOSH" = "true" ] && REMOTE_SUMMARY="${REMOTE_SUMMARY:+$REMOTE_SUMMARY+}mosh"
@@ -353,7 +329,7 @@ printf '%s' "$PAYLOAD" | docker exec -i -u coder "${IDENTITY_ENV[@]}" "dev-agent
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  dev-agent-$NAME is up (manifest: containers/$NAME.yml)"
+echo "  dev-agent-$NAME is up (manifest: $MANIFEST)"
 echo ""
 echo "  VS Code / Cursor:  Dev Containers: Attach to Running Container"
 echo "  Terminal:          docker exec -it -u coder dev-agent-$NAME bash"

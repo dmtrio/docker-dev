@@ -51,10 +51,20 @@ bundled `rules/`. To point at your own locations instead, drop a gitignored
 ```bash
 DEV_AGENT_HOME="$HOME/dev-agent"           # move the runtime home (secrets/keys/artifacts)
 RULES_PATH="$HOME/git/agent-conf/rules"    # use your own rules repo instead of bundled rules/
+CONTAINERS_PATH="$HOME/dev-agent/containers"  # read manifests from your own (private) dir
 ```
 
 (When `DEV_AGENT_HOME` is set and `$DEV_AGENT_HOME/rules` exists, it's used as
-the rules dir automatically — no need to set `RULES_PATH` too.)
+the rules dir automatically — no need to set `RULES_PATH` too. The same applies
+to manifests: if `$DEV_AGENT_HOME/containers` exists it's used automatically, so
+you don't need to set `CONTAINERS_PATH` either.)
+
+**Keep your manifests out of this repo.** Your real `containers/*.yml` carry
+semi-private data (private repo URLs, LAN subnets, identity naming), so this
+repo ships only `containers/TEMPLATE.yml`. Point manifests at a directory of
+your own — e.g. `~/dev-agent/containers` (auto-detected) — and make *that* its
+own private git repo. The tool stays public; your configs stay private and
+versioned, with no second copy of the project to maintain.
 
 ## Quick start
 
@@ -173,8 +183,10 @@ language's download is blocked, add the host live with `bin/allow-egress.sh`.
 
 ## Identity model
 
-- **Per agent, not per container**: shims front each CLI and load
-  `~/.agent-keys/common.env` + `<agent>.env` at process start. Delegation
+- **Per agent, not per container**: shims front each CLI and load that agent's
+  own `~/.agent-keys/<agent>.env` at process start — one complete file per agent
+  (env-scoped secrets shared by all + that agent's own agent-scoped keys), so
+  `cat <agent>.env` is the full audit of what the agent sees. Delegation
   (`cursor-agent -p` from claude) never leaks the invoker's credentials.
 - **Obsidian Annotated**: one scoped key per agent, bound explicitly under the
   manifest's `agent_secrets:` (an agent-scoped plugin — `obsidian-annotated`
@@ -226,16 +238,19 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
 - `src/` — internal source, never run directly:
   - `common.sh` — shared path resolution (sourced by the scripts)
   - `manifest.py` — host-side manifest validation; `wire_plugins.py` — the
-    agent-config writer `up.sh` execs after boot
+    agent-config writer `up.sh` execs after boot; `keyfiles.sh` — host-side
+    key-file composition `up.sh` sources
   - `entrypoint.sh`, `init-firewall.sh`, `tmux*`, `mosh-server-wrapper.sh` —
     baked into the image
 - `compose/` — `docker-compose.local.yml` (base) plus the `ssh.yml` / `mosh.yml`
   overlays `up.sh` applies for a manifest's `ssh:` / `remote.mosh` settings
 - `docs/` — `script.md` (every script, grouped by lifecycle), `TIPS.md`,
   `workspace.CLAUDE.md` (copied into each container as `/workspace/CLAUDE.md`)
-- `tests/` — host-runnable checks (`plugins.test.sh` — yq + jq + python3;
-  the manifest validation and wiring logic are unit-tested in
-  `test_manifest.py` / `test_wire_plugins.py`)
+- `tests/` — host-runnable checks. `plugins.test.sh` is the entry point (yq +
+  jq + python3); it runs the Python unit tests (`test_manifest.py` /
+  `test_wire_plugins.py` — manifest validation + wiring logic) and the
+  host-side bash unit tests (`bash.test.sh` — `keyfiles.sh`, `common.sh`,
+  `allow-egress.sh`, `update-agent-keys.sh`, the run-*.sh token generation)
 - `Dockerfile` — the shared image and its contracts
 - `secrets.env.example` — template for your `secrets.env`
 - `.env` (gitignored) — optional `DEV_AGENT_HOME` / `RULES_PATH` /

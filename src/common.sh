@@ -25,3 +25,18 @@ if [ -f "$CDD_ROOT/.env" ]; then
     unset _had_e _env_rc
 fi
 BASE_PATH="${DEV_AGENT_HOME:-$CDD_ROOT/.dev-agent}"
+
+# Where container manifests are read from (up.sh, allow-egress.sh). Same
+# override philosophy as RULES_PATH: an explicit CONTAINERS_PATH (env or ./.env)
+# wins; otherwise prefer a per-setup $BASE_PATH/containers when it exists — so
+# your real, semi-private manifests (private repo URLs, LAN subnets, identity
+# naming) live OUTSIDE this repo, e.g. as their own private git repo at
+# ~/dev-agent/containers — and fall back to the repo's containers/ (which ships
+# only TEMPLATE.yml). A [ -d ] read only; still no filesystem side effects.
+if [ -z "${CONTAINERS_PATH:-}" ]; then
+    if [ -d "$BASE_PATH/containers" ]; then
+        CONTAINERS_PATH="$BASE_PATH/containers"
+    else
+        CONTAINERS_PATH="$CDD_ROOT/containers"
+    fi
+fi
