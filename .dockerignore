@@ -1,0 +1,7 @@
+# Plugin host-side launchers run on the Mac (started via ./service.sh <name>),
+# never inside a container. Keep them out of the build context so no host-only
+# script ships in the image: `COPY plugins /opt/plugins` then carries only each
+# plugin's plugin.yml (+ any baked assets). The Dockerfile bake loop already
+# globs plugins/*/plugin.yml, so this is a cleanliness guarantee, not a
+# functional dependency.
+plugins/*/run.sh

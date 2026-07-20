@@ -27,19 +27,26 @@ Host-side capability services. Start the ones a container's manifest grants
 (`capabilities.gateway/proxyman/browser`) **before** `./up.sh`, and keep them
 running for as long as the container runs — the container reaches them over
 `host.docker.internal`. Each binds localhost only and self-generates its token
-into `secrets.env` on first run. Run them in tmux (or wrap in launchd) so they
-survive.
+into `secrets.env` on first run. Start them with `./service.sh <name>` — the
+dispatcher execs the plugin's own launcher (`plugins/<name>/run.sh`) so you
+never need the path. Run them in tmux (or wrap in launchd) so they survive.
 
-| Script | Serves | Port | Token (auto-seeded) |
+| `./service.sh …` | Serves | Port | Token (auto-seeded) |
 | --- | --- | --- | --- |
-| `bin/run-gateway-coding.sh` | The `coding` MCP profile (headless Playwright) | 8811 | `MCP_GATEWAY_TOKEN` |
-| `bin/run-proxyman-bridge.sh` | Proxyman's stdio MCP over HTTP (Proxyman.app must be open) | 8813 | `PROXYMAN_BRIDGE_KEY` |
-| `bin/run-research-browser.sh [brave\|chrome]` | A watchable, isolated-profile research browser | 8814 | `RESEARCH_BROWSER_KEY` |
+| `./service.sh gateway` | The `coding` MCP profile (headless Playwright) | 8811 | `MCP_GATEWAY_TOKEN` |
+| `./service.sh proxyman` | Proxyman's stdio MCP over HTTP (Proxyman.app must be open) | 8813 | `PROXYMAN_BRIDGE_KEY` |
+| `./service.sh browser [brave\|chrome]` | A watchable, isolated-profile research browser | 8814 | `RESEARCH_BROWSER_KEY` |
 
 ```bash
-./bin/run-gateway-coding.sh          # then leave it running
-./bin/run-research-browser.sh brave  # optional arg picks the browser (default: Brave, else Chrome)
+./service.sh gateway         # then leave it running
+./service.sh browser brave   # extra args are forwarded to the launcher (default: Brave, else Chrome)
+./service.sh                 # lists the plugins that ship a host service
 ```
+
+`service.sh` is deliberately separate from `up.sh`: `up.sh` recreates a
+container (and would kill a running agent), while starting a host service must
+never carry that risk — so it's its own root-level command and never touches
+docker.
 
 ## Creating / updating a container
 

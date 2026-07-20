@@ -62,7 +62,7 @@ from pathlib import Path
 
 # No server names are reserved any more: as of Plugins v2 Phase 2, EVERY MCP
 # server up.sh wires comes from a plugin file (obsidian-annotated is now
-# plugins/obsidian-annotated.yml, an agent-scoped remote plugin). Cross-plugin
+# plugins/obsidian-annotated/plugin.yml, an agent-scoped remote plugin). Cross-plugin
 # name collisions are caught by the generic duplicate check below and host-side.
 
 # The codex managed block. Detection matches on the PREFIX (like the old sed

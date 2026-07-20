@@ -36,10 +36,10 @@ else
 
 echo "── shipped plugin files (validated through the real src/manifest.py)"
 found=0
-for f in plugins/*.yml; do
+for f in plugins/*/plugin.yml; do
     [ -e "$f" ] || continue
     found=1
-    name=$(basename "$f" .yml)
+    name=$(basename "$(dirname "$f")")
     # Same conversion up.sh feeds --derive, with a manifest enabling just
     # this plugin: the real validator applies every rule (name charset, mcp
     # schema, reserved names, egress hostnames) — no mirrored copies.
@@ -72,9 +72,9 @@ echo "── template"
 # TEMPLATE must pass the real validator end-to-end
 {
     yq -o=json -I=0 containers/TEMPLATE.yml
-    for f in plugins/*.yml; do
+    for f in plugins/*/plugin.yml; do
         [ -e "$f" ] || continue
-        printf '%s\t' "$(basename "$f" .yml)"
+        printf '%s\t' "$(basename "$(dirname "$f")")"
         yq -o=json -I=0 "$f"
     done
 } | python3 src/manifest.py --derive >/dev/null \
@@ -85,13 +85,13 @@ echo "── all shipped plugins as a set (cross-plugin rules)"
 # A manifest enabling EVERY shipped plugin: catches two shipped files
 # defining the same MCP server name or squatting a reserved one — rules the
 # per-file checks above can't see.
-ALL_PLUGINS=$(for f in plugins/*.yml; do [ -e "$f" ] && printf '"%s",' "$(basename "$f" .yml)"; done)
+ALL_PLUGINS=$(for f in plugins/*/plugin.yml; do [ -e "$f" ] && printf '"%s",' "$(basename "$(dirname "$f")")"; done)
 ALL_DERIVED=$(
     {
         printf '{"plugins": [%s]}\n' "${ALL_PLUGINS%,}"
-        for f in plugins/*.yml; do
+        for f in plugins/*/plugin.yml; do
             [ -e "$f" ] || continue
-            printf '%s\t' "$(basename "$f" .yml)"
+            printf '%s\t' "$(basename "$(dirname "$f")")"
             yq -o=json -I=0 "$f"
         done
     } | python3 src/manifest.py --derive
@@ -120,8 +120,8 @@ echo "── derive → build-payload chain (both host halves, real serena + gat
 DERIVED=$(
     {
         printf '{"plugins": ["serena", "gateway"]}\n'
-        printf 'serena\t'; yq -o=json -I=0 plugins/serena.yml
-        printf 'gateway\t'; yq -o=json -I=0 plugins/gateway.yml
+        printf 'serena\t'; yq -o=json -I=0 plugins/serena/plugin.yml
+        printf 'gateway\t'; yq -o=json -I=0 plugins/gateway/plugin.yml
     } | python3 src/manifest.py --derive
 ) || fail "--derive exited non-zero on a serena+gateway manifest"
 eval "$DERIVED"
@@ -148,7 +148,7 @@ echo "── agent_secrets chain: obsidian bound to claude + cursor-agent (Phase
 A_DERIVED=$(
     {
         printf '{"plugins": ["obsidian-annotated"], "agent_secrets": [{"agent":"claude","slot":"OBSIDIAN_ANNOTATED_KEY","secret":"OBSIDIAN_KEY_a_claude"},{"agent":"cursor-agent","slot":"OBSIDIAN_ANNOTATED_KEY","secret":"OBSIDIAN_KEY_b_cursor_agent"}]}\n'
-        printf 'obsidian-annotated\t'; yq -o=json -I=0 plugins/obsidian-annotated.yml
+        printf 'obsidian-annotated\t'; yq -o=json -I=0 plugins/obsidian-annotated/plugin.yml
     } | SECRET_KEY_VARS="OBSIDIAN_KEY_a_claude OBSIDIAN_KEY_b_cursor_agent" SECRETS_FILE=/sec/secrets.env python3 src/manifest.py --derive
 ) || fail "--derive exited non-zero on an agent_secrets manifest"
 eval "$A_DERIVED"
@@ -235,15 +235,40 @@ grep -qE 'common\.env" *$|>> "\$KEYS_PATH/common.env"|> "\$KEYS_PATH/common.env"
     && fail "up.sh still writes common.env (Phase 3 retired it)" \
     || pass "up.sh no longer writes common.env"
 
+echo "── plugin directory layout (packageable plugins)"
+# Each plugin is a directory plugins/<name>/plugin.yml (+ optional host-only
+# run.sh); the flat plugins/<name>.yml layout is gone. Pin both so a loader
+# that silently reverts to the flat glob is caught.
+flat=$(find plugins -maxdepth 1 -name '*.yml' -type f 2>/dev/null)
+[ -z "$flat" ] \
+    && pass "no flat plugins/*.yml remain (all migrated to directories)" \
+    || fail "stray flat plugin file(s): $flat"
+missing=""
+for d in plugins/*/; do
+    [ -e "$d/plugin.yml" ] || missing="$missing $(basename "$d")"
+done
+[ -z "$missing" ] \
+    && pass "every plugin directory has a plugin.yml" \
+    || fail "plugin dir(s) missing plugin.yml:$missing"
+grep -qF -- 'plugins"/*/plugin.yml' up.sh \
+    && pass "up.sh globs the directory layout (plugins/*/plugin.yml)" \
+    || fail "up.sh no longer globs plugins/*/plugin.yml"
+
 echo "── dockerfile bake"
-for f in plugins/*.yml; do
+for f in plugins/*/plugin.yml; do
     [ -e "$f" ] || continue
     # Only local plugins carry an install: block; skip the empty string a
     # remote/config-only plugin yields (bash -n on "" trivially passes anyway).
     yq -r '.install // ""' "$f" | bash -n \
-        && pass "$(basename "$f" .yml): install block is valid bash (or empty)" \
-        || fail "$(basename "$f" .yml): install block fails bash -n"
+        && pass "$(basename "$(dirname "$f")"): install block is valid bash (or empty)" \
+        || fail "$(basename "$(dirname "$f")"): install block fails bash -n"
 done
+grep -qF -- '/opt/plugins/*/plugin.yml' Dockerfile \
+    && pass "Dockerfile bake loop globs the directory layout" \
+    || fail "Dockerfile bake loop no longer globs /opt/plugins/*/plugin.yml"
+grep -qxF -- 'plugins/*/run.sh' .dockerignore \
+    && pass ".dockerignore keeps host-only run.sh launchers out of the image" \
+    || fail ".dockerignore no longer excludes plugins/*/run.sh"
 grep -qF -- "yq -e -r '.install'" Dockerfile \
     && pass "Dockerfile bake still gates on .install via yq -e" \
     || fail "Dockerfile bake no longer reads .install"

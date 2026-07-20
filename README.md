@@ -138,20 +138,21 @@ its token into `secrets.env` on first run.
 ```yaml
 host_port: 8811                          # firewall grant for host.docker.internal:8811
 secrets:
-  MCP_GATEWAY_TOKEN: {scope: env, hint: "gateway (run bin/run-gateway-coding.sh once)"}
+  MCP_GATEWAY_TOKEN: {scope: env, hint: "gateway (run ./service.sh gateway once)"}
 mcp:
   coding:
     url: http://host.docker.internal:8811/mcp
     headers: {Authorization: "Bearer ${MCP_GATEWAY_TOKEN}"}
 ```
 
-Shipped remote plugins (each needs its host service started once):
+Shipped remote plugins (each needs its host service started once, via
+`./service.sh <name>`):
 
-| Plugin | Port | Mac-side service | Token |
+| Plugin | Port | Start on the Mac | Token |
 |---|---|---|---|
-| `gateway` | 8811 | `bin/run-gateway-coding.sh` — headless Playwright via Docker MCP gateway | `MCP_GATEWAY_TOKEN` |
-| `proxyman` | 8813 | `bin/run-proxyman-bridge.sh` — Proxyman traffic capture | `PROXYMAN_BRIDGE_KEY` |
-| `browser` | 8814 | `bin/run-research-browser.sh` — watchable desktop Brave/Chrome, isolated profile | `RESEARCH_BROWSER_KEY` |
+| `gateway` | 8811 | `./service.sh gateway` — headless Playwright via Docker MCP gateway | `MCP_GATEWAY_TOKEN` |
+| `proxyman` | 8813 | `./service.sh proxyman` — Proxyman traffic capture | `PROXYMAN_BRIDGE_KEY` |
+| `browser` | 8814 | `./service.sh browser` — watchable desktop Brave/Chrome, isolated profile | `RESEARCH_BROWSER_KEY` |
 
 Two independent axes, deliberately split:
 
@@ -221,17 +222,19 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
 
 ## Repo map
 
-- `up.sh` / `down.sh` — container lifecycle from manifests (the two entry points
-  you run from the repo root)
+- `up.sh` / `down.sh` / `service.sh` — the commands you run from the repo root:
+  `up.sh` / `down.sh` are container lifecycle from manifests; `service.sh <name>`
+  starts a plugin's Mac-side host service (see `plugins/`)
 - `containers/` — manifests (`TEMPLATE.yml` to copy; your own are gitignored)
-- `plugins/` — drop-in local MCP tools (one `<name>.yml` each: install / mcp /
-  egress), baked at image build, wired per container via the manifest's
-  `plugins:` list
+- `plugins/` — drop-in MCP tools, one directory each: `<name>/plugin.yml`
+  (install / mcp / egress / secrets) plus an optional host-only `<name>/run.sh`
+  for plugins backed by a Mac-side service (gateway / proxyman / browser).
+  `plugin.yml`s are baked at image build and wired per container via the
+  manifest's `plugins:` list; `run.sh`s are started with `./service.sh <name>`
+  and excluded from the image via `.dockerignore`
 - `rules/` — bundled default agent rules & skills (override via `RULES_PATH`)
-- `bin/` — host commands you run (occasionally; `up.sh` / `down.sh` are the daily
-  ones and stay at the root):
-  - `run-gateway-coding.sh` / `run-proxyman-bridge.sh` / `run-research-browser.sh`
-    — Mac-side capability services (start once, leave running)
+- `bin/` — host commands you run occasionally (`up.sh` / `down.sh` / `service.sh`
+  are the daily ones and stay at the root):
   - `allow-egress.sh` — add egress domains to a running container (no restart)
   - `update-agent-keys.sh` — temporary per-agent key override; durable changes
     go in secrets.env
@@ -250,7 +253,8 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
   jq + python3); it runs the Python unit tests (`test_manifest.py` /
   `test_wire_plugins.py` — manifest validation + wiring logic) and the
   host-side bash unit tests (`bash.test.sh` — `keyfiles.sh`, `common.sh`,
-  `allow-egress.sh`, `update-agent-keys.sh`, the run-*.sh token generation)
+  `allow-egress.sh`, `update-agent-keys.sh`, `service.sh`, the
+  `plugins/*/run.sh` token generation)
 - `Dockerfile` — the shared image and its contracts
 - `secrets.env.example` — template for your `secrets.env`
 - `.env` (gitignored) — optional `DEV_AGENT_HOME` / `RULES_PATH` /

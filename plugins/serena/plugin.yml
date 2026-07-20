@@ -1,4 +1,4 @@
-# plugins/serena.yml — a baked-in local MCP tool (stdio, runs INSIDE the
+# plugins/serena/plugin.yml — a baked-in local MCP tool (stdio, runs INSIDE the
 # container). Enable it per container by listing its name in the manifest:
 #
 #   plugins: [serena]

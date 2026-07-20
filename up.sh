@@ -67,14 +67,16 @@ done
 DERIVED=$(
     {
         yq -o=json -I=0 "$MANIFEST"
-        for f in "$SCRIPT_DIR/plugins"/*.yml; do
+        for f in "$SCRIPT_DIR/plugins"/*/plugin.yml; do
             [ -e "$f" ] || continue
+            # Each plugin is a directory: plugins/<name>/plugin.yml (+ optional
+            # host-only run.sh). The plugin NAME is the parent dir name.
             # '!' = unreadable. manifest.py errors on it ONLY when the
             # manifest lists that plugin — a broken/WIP file in plugins/
             # must not block bring-up of containers that never use it.
             DOC=$(yq -o=json -I=0 "$f" 2>/dev/null) \
                 && [ "$(printf '%s\n' "$DOC" | wc -l)" -eq 1 ] || DOC='!'
-            printf '%s\t%s\n' "$(basename "$f" .yml)" "$DOC"
+            printf '%s\t%s\n' "$(basename "$(dirname "$f")")" "$DOC"
         done
     } | SECRET_KEY_VARS="$SECRET_KEY_VARS" SECRETS_FILE="$SECRETS_FILE" \
         GIT_NAME_DEFAULT="$(git config --global user.name 2>/dev/null || true)" \

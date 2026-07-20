@@ -25,20 +25,20 @@ SERENA = {"install": "x", "mcp": {"serena": {"command": "bash", "args": ["-lc", 
           "egress": ["blob.core.windows.net"]}
 OTHER = {"install": "x", "mcp": {"other-tool": {"command": "python3"}}, "egress": []}
 # Remote plugins (Plugins v2 Phase 1) — no install:, url: config + host_port +
-# an env-scoped secret slot. Mirror the shipped plugins/*.yml files.
+# an env-scoped secret slot. Mirror the shipped plugins/*/plugin.yml files.
 GATEWAY = {"host_port": 8811,
            "secrets": {"MCP_GATEWAY_TOKEN": {"scope": "env",
-                       "hint": "gateway (run bin/run-gateway-coding.sh once)"}},
+                       "hint": "gateway (run ./service.sh gateway once)"}},
            "mcp": {"coding": {"url": "http://host.docker.internal:8811/mcp",
                               "headers": {"Authorization": "Bearer ${MCP_GATEWAY_TOKEN}"}}}}
 PROXYMAN = {"host_port": 8813,
             "secrets": {"PROXYMAN_BRIDGE_KEY": {"scope": "env",
-                        "hint": "proxyman (run bin/run-proxyman-bridge.sh once)"}},
+                        "hint": "proxyman (run ./service.sh proxyman once)"}},
             "mcp": {"proxyman": {"url": "http://host.docker.internal:8813/mcp",
                                  "headers": {"X-API-Key": "${PROXYMAN_BRIDGE_KEY}"}}}}
 BROWSER = {"host_port": 8814,
            "secrets": {"RESEARCH_BROWSER_KEY": {"scope": "env",
-                       "hint": "browser (run bin/run-research-browser.sh once)"}},
+                       "hint": "browser (run ./service.sh browser once)"}},
            "mcp": {"browser": {"url": "http://host.docker.internal:8814/mcp",
                                "headers": {"X-API-Key": "${RESEARCH_BROWSER_KEY}"}}}}
 # Agent-scoped plugins (Plugins v2 Phase 2). OBSIDIAN is a remote server with an
@@ -74,11 +74,11 @@ class TestErrorTable(unittest.TestCase):
          "  plugin '../evil': illegal characters (allowed: letters, digits, underscore, dash)"),
         ("missing plugin file", {"plugins": ["ghost"]}, None,
          "manifest plugins failed validation:\n"
-         "  plugin 'ghost': no plugin file at plugins/ghost.yml"),
+         "  plugin 'ghost': no plugin file at plugins/ghost/plugin.yml"),
         ("aggregated plugin errors", {"plugins": ["../evil", "ghost"]}, None,
          "manifest plugins failed validation:\n"
          "  plugin '../evil': illegal characters (allowed: letters, digits, underscore, dash)\n"
-         "  plugin 'ghost': no plugin file at plugins/ghost.yml"),
+         "  plugin 'ghost': no plugin file at plugins/ghost/plugin.yml"),
         ("remote without ssh", {"remote": {"tmux": True}}, None,
          "manifest has remote: but no ssh: section — remote access rides the SSH login path (add ssh.port)"),
         ("bad notify kind", {"ssh": {"port": 22}, "remote": {"tmux": True, "notify": "slack"}}, None,
@@ -380,7 +380,7 @@ class TestReviewFixes(unittest.TestCase):
         files = {"p": [{"mcp": {"srv": {"command": "x"}}}]}
         with self.assertRaises(m.ManifestError) as cm:
             derive({"plugins": ["p"]}, plugin_files=files)
-        self.assertIn("plugins/p.yml must be a YAML map", str(cm.exception))
+        self.assertIn("plugins/p/plugin.yml must be a YAML map", str(cm.exception))
 
     def test_empty_plugin_file_is_valid_noop(self):
         d = derive({"plugins": ["p"]}, plugin_files={"p": None})
@@ -392,7 +392,7 @@ class TestReviewFixes(unittest.TestCase):
         self.assertEqual(d["PLUGINS"], "good")
         with self.assertRaises(m.ManifestError) as cm:
             derive({"plugins": ["broken"]}, plugin_files=files)
-        self.assertIn("plugins/broken.yml is not valid YAML", str(cm.exception))
+        self.assertIn("plugins/broken/plugin.yml is not valid YAML", str(cm.exception))
 
     def test_non_scalar_leaf_is_named_error(self):
         with self.assertRaises(m.ManifestError) as cm:
@@ -432,7 +432,7 @@ class TestPluginsV2Phase1(unittest.TestCase):
         # env-scoped secret → one SLOT<tab>SOURCE<tab>HINT record
         self.assertEqual(
             d["PLUGIN_ENV_SECRETS"],
-            "MCP_GATEWAY_TOKEN\tMCP_GATEWAY_TOKEN\tgateway (run bin/run-gateway-coding.sh once)\n")
+            "MCP_GATEWAY_TOKEN\tMCP_GATEWAY_TOKEN\tgateway (run ./service.sh gateway once)\n")
         # remote servers add no domain egress (they dial host.docker.internal)
         self.assertEqual(d["EGRESS"], "")
 
@@ -486,7 +486,7 @@ class TestPluginsV2Phase1(unittest.TestCase):
         d = derive({"plugins": ["gateway"], "common_secrets": {"MCP_GATEWAY_TOKEN": "GW_PROD"}})
         self.assertEqual(
             d["PLUGIN_ENV_SECRETS"],
-            "MCP_GATEWAY_TOKEN\tGW_PROD\tgateway (run bin/run-gateway-coding.sh once)\n")
+            "MCP_GATEWAY_TOKEN\tGW_PROD\tgateway (run ./service.sh gateway once)\n")
 
     def test_common_secrets_list_passthrough(self):
         d = derive({"plugins": ["serena"], "common_secrets": ["PLAYWRIGHT_KEY"]})
