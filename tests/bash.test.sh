@@ -2,7 +2,7 @@
 # tests/bash.test.sh — unit tests for the host-side bash that holds real logic.
 # Hand-rolled execute-and-assert (same style as plugins.test.sh; no bats
 # dependency). Covers:
-#   - src/compose-keys.sh   key-file composition (sourced by up.sh)
+#   - src/keyfiles.sh   key-file composition (sourced by up.sh)
 #   - common.sh             BASE_PATH resolution (default / env / ./.env / broken)
 #   - allow-egress.sh       arg parsing + strict domain validation
 #   - update-agent-keys.sh  per-agent key edits (set / remove / common / list)
@@ -37,16 +37,16 @@ SBOX="$WORK/repo"; mkdir -p "$SBOX/bin" "$SBOX/src"
 cp "$REPO"/bin/*.sh "$SBOX/bin/"; cp "$REPO"/src/common.sh "$SBOX/src/"
 
 # ────────────────────────────────────────────────────────────────────────────
-echo "── src/compose-keys.sh ──"
+echo "── src/keyfiles.sh ──"
 # shellcheck disable=SC1091
-. "$REPO/src/compose-keys.sh"   # defines warn_missing + compose_keys, no side effects
+. "$REPO/src/keyfiles.sh"   # defines warn_missing + write_keyfiles, no side effects
 SHIM="claude pi gemini cursor-agent codex"
 
 d="$WORK/ck1"; mkdir -p "$d"; chmod 700 "$d"
 MCP_GATEWAY_TOKEN=gwval GH_TOKEN=ghval SRC_C=ckey SRC_P=pkey
 PES=$(printf 'MCP_GATEWAY_TOKEN\tMCP_GATEWAY_TOKEN\tgateway (run run-gateway-coding.sh once)\n')
 AS=$(printf 'claude\tOBSIDIAN_ANNOTATED_KEY\tSRC_C\npi\tANNOTATED_WATCH_KEY\tSRC_P\n')
-compose_keys "$d" "$SHIM" "$PES" "$AS" >/dev/null
+write_keyfiles "$d" "$SHIM" "$PES" "$AS" >/dev/null
 
 assert_eq "claude.env = shared + its agent-scoped key" \
     $'MCP_GATEWAY_TOKEN=gwval\nGH_TOKEN=ghval\nOBSIDIAN_ANNOTATED_KEY=ckey' "$(cat "$d/claude.env")"
@@ -62,7 +62,7 @@ unset MCP_GATEWAY_TOKEN GH_TOKEN SRC_C SRC_P
 # missing source var → warn, and the slot is NOT written
 d="$WORK/ck2"; mkdir -p "$d"; chmod 700 "$d"
 PES=$(printf 'MISSING_TOK\tMISSING_TOK\tgateway (run run-gateway-coding.sh once)\n')
-out=$(compose_keys "$d" "claude" "$PES" "")
+out=$(write_keyfiles "$d" "claude" "$PES" "")
 assert_contains "missing source warns" "$out" "MISSING_TOK not in secrets.env — gateway (run run-gateway-coding.sh once) will not authenticate"
 assert_eq "missing source leaves an empty file" "" "$(cat "$d/claude.env")"
 
@@ -71,7 +71,7 @@ d="$WORK/ck3"; mkdir -p "$d"; chmod 700 "$d"
 FOO=shared BAR=agentval
 PES=$(printf 'FOO\tFOO\thint\n')
 AS=$(printf 'claude\tFOO\tBAR\n')   # rebinds FOO for claude to BAR's value
-compose_keys "$d" "claude" "$PES" "$AS" >/dev/null
+write_keyfiles "$d" "claude" "$PES" "$AS" >/dev/null
 sourced=$(env -i bash -c 'set -a; . "$1"; set +a; echo "$FOO"' _ "$d/claude.env")
 assert_eq "agent-scoped overrides shared on source (last wins)" "agentval" "$sourced"
 unset FOO BAR

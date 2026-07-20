@@ -238,7 +238,7 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
 - `src/` — internal source, never run directly:
   - `common.sh` — shared path resolution (sourced by the scripts)
   - `manifest.py` — host-side manifest validation; `wire_plugins.py` — the
-    agent-config writer `up.sh` execs after boot; `compose-keys.sh` — host-side
+    agent-config writer `up.sh` execs after boot; `keyfiles.sh` — host-side
     key-file composition `up.sh` sources
   - `entrypoint.sh`, `init-firewall.sh`, `tmux*`, `mosh-server-wrapper.sh` —
     baked into the image
@@ -249,7 +249,7 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
 - `tests/` — host-runnable checks. `plugins.test.sh` is the entry point (yq +
   jq + python3); it runs the Python unit tests (`test_manifest.py` /
   `test_wire_plugins.py` — manifest validation + wiring logic) and the
-  host-side bash unit tests (`bash.test.sh` — `compose-keys.sh`, `common.sh`,
+  host-side bash unit tests (`bash.test.sh` — `keyfiles.sh`, `common.sh`,
   `allow-egress.sh`, `update-agent-keys.sh`, the run-*.sh token generation)
 - `Dockerfile` — the shared image and its contracts
 - `secrets.env.example` — template for your `secrets.env`

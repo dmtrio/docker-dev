@@ -1,5 +1,5 @@
 #!/bin/bash
-# src/compose-keys.sh — host-side key-file composition, sourced by up.sh and
+# src/keyfiles.sh — host-side key-file composition, sourced by up.sh and
 # unit-tested by tests/bash.test.sh. NOT baked into the image (runs on the host,
 # unlike wire_plugins.py). Extracted from up.sh so the real composition logic is
 # executable in tests, not just mirrored.
@@ -16,13 +16,13 @@
 
 warn_missing() { echo "  ⚠ $1 not in secrets.env — $2 will not authenticate until set"; }
 
-# compose_keys <keys_dir> <shim_agents> <plugin_env_secrets> <agent_secrets>
+# write_keyfiles <keys_dir> <shim_agents> <plugin_env_secrets> <agent_secrets>
 #   keys_dir            already exists, mode 700, wiped of *.env by the caller
 #   shim_agents         space-separated agent names (match the Dockerfile shims)
 #   plugin_env_secrets  SLOT<TAB>SOURCE<TAB>HINT per line (env-scoped, from manifest.py)
 #   agent_secrets       AGENT<TAB>SLOT<TAB>SOURCE per line (agent-scoped, from manifest.py)
 # Reads GH_TOKEN and every SOURCE var from the environment (indirect expansion).
-compose_keys() {
+write_keyfiles() {
     local keys_dir="$1" shim_agents="$2" plugin_env_secrets="$3" agent_secrets="$4"
     local shared="" slot src hint agent a f
 

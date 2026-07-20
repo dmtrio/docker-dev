@@ -96,13 +96,13 @@ rm -f "$KEYS_PATH"/*.env
 # One COMPLETE env file per shim agent (Plugins v2 Phase 3 — common.env retired).
 # Each shim (baked into the image; SHIM_AGENTS must match the Dockerfile loop)
 # sources only its own <agent>.env, so that file carries everything the agent
-# sees. The composition logic lives in src/compose-keys.sh (sourced here, and
+# sees. The composition logic lives in src/keyfiles.sh (sourced here, and
 # unit-tested by tests/bash.test.sh) so the real code is exercised in tests, not
 # mirrored; up.sh only routes the derived vars (NAMES) into it — the ${!source}
 # value lookups happen against the secrets.env this shell already sourced.
 SHIM_AGENTS="claude pi gemini cursor-agent codex"
-. "$SCRIPT_DIR/src/compose-keys.sh"
-compose_keys "$KEYS_PATH" "$SHIM_AGENTS" "$PLUGIN_ENV_SECRETS" "$AGENT_SECRETS"
+. "$SCRIPT_DIR/src/keyfiles.sh"
+write_keyfiles "$KEYS_PATH" "$SHIM_AGENTS" "$PLUGIN_ENV_SECRETS" "$AGENT_SECRETS"
 
 # ── Host paths + platform ─────────────────────────────────────────────────────
 ARTIFACTS_PATH="$BASE_PATH/artifacts/$NAME"
