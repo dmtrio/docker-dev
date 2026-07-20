@@ -22,7 +22,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-. "$SCRIPT_DIR/common.sh"   # sets CONTAINERS_PATH (where manifests live)
 
 # ── Parse args ────────────────────────────────────────────────────────────────
 SAVE=""          # yml | firewall | none | "" (ask)
@@ -53,6 +52,9 @@ case "${SAVE:-}" in yml|firewall|none|"") ;; *) echo "Error: --save must be yml,
 # name (dev-agent-coding-personal-site); normalise to both.
 SHORT="${RAW#dev-agent-}"
 CONTAINER="dev-agent-$SHORT"
+# Sourced here (not at the top) so --help / usage / bad-flag paths don't depend
+# on ./.env; only the manifest path below needs CONTAINERS_PATH.
+. "$SCRIPT_DIR/common.sh"   # sets CONTAINERS_PATH (where manifests live)
 MANIFEST="$CONTAINERS_PATH/$SHORT.yml"
 
 command -v docker >/dev/null || { echo "Error: docker not found"; exit 1; }

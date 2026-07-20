@@ -159,7 +159,7 @@ else
 fi
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
-echo "Applying containers/$NAME.yml → dev-agent-$NAME"
+echo "Applying $MANIFEST → dev-agent-$NAME"
 REMOTE_SUMMARY=""
 [ "$REMOTE_TMUX" = "true" ] && REMOTE_SUMMARY="tmux"
 [ "$REMOTE_MOSH" = "true" ] && REMOTE_SUMMARY="${REMOTE_SUMMARY:+$REMOTE_SUMMARY+}mosh"
@@ -329,7 +329,7 @@ printf '%s' "$PAYLOAD" | docker exec -i -u coder "${IDENTITY_ENV[@]}" "dev-agent
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  dev-agent-$NAME is up (manifest: containers/$NAME.yml)"
+echo "  dev-agent-$NAME is up (manifest: $MANIFEST)"
 echo ""
 echo "  VS Code / Cursor:  Dev Containers: Attach to Running Container"
 echo "  Terminal:          docker exec -it -u coder dev-agent-$NAME bash"
