@@ -166,6 +166,16 @@ REMOTE_SUMMARY=""
 [ -n "$REMOTE_NOTIFY" ]     && REMOTE_SUMMARY="${REMOTE_SUMMARY:+$REMOTE_SUMMARY+}$REMOTE_NOTIFY"
 echo "  ports='${HOST_MCP_PORTS:-none}' egress='${EGRESS:-none}' plugins='${PLUGINS:-none}' remote='${REMOTE_SUMMARY:-none}' mem=$MEM_LIMIT"
 
+# --project-directory pins relative paths in the compose files (notably the
+# build context) to the repo root. Without it compose derives the project
+# directory from the first -f file, i.e. compose/, and the build context
+# resolves to compose/ — where there is no Dockerfile.
+#
+# NOTE: everything from here to the `docker compose` line is one command —
+# a chain of env-var prefixes joined by trailing backslashes. Do not insert
+# comments or blank lines inside it: a backslash-newline splices the next
+# line in, so a comment silently swallows the whole prefix chain and compose
+# runs with every one of these variables unset.
 CONTAINER_NAME="$NAME" \
 USER_UID="$USER_UID" USER_GID="$USER_GID" \
 RULES_PATH="$RULES_PATH" \
@@ -181,10 +191,6 @@ REMOTE_TMUX="$REMOTE_TMUX" \
 MOSH_PORTS="$MOSH_PORTS" MOSH_PORTS_DASH="$MOSH_PORTS_DASH" \
 NTFY_URL="$CONTAINER_NTFY_URL" NTFY_TOPIC="$CONTAINER_NTFY_TOPIC" \
 IMAGE_TAG="$NAME" \
-# --project-directory pins relative paths in the compose files (notably the
-# build context) to the repo root. Without it compose derives the project
-# directory from the first -f file, i.e. compose/, and the build context
-# resolves to compose/ — where there is no Dockerfile.
 docker compose -p "dev-agent-$NAME" --project-directory "$SCRIPT_DIR" \
     $COMPOSE_FILES up -d --build
 
