@@ -67,24 +67,25 @@ unset FOO BAR
 # ────────────────────────────────────────────────────────────────────────────
 echo "── common.sh ──"
 # Copy it out so CDD_ROOT is our temp dir (not the repo, whose ./.env we must
-# not read) and BASH_SOURCE resolves there.
-cfg="$WORK/cfg"; mkdir -p "$cfg"; cp "$REPO/common.sh" "$cfg/common.sh"
-bp() { env -i DEV_AGENT_HOME="${1-}" bash -c '. "$1"; echo "$BASE_PATH"' _ "$cfg/common.sh"; }
+# not read) and BASH_SOURCE resolves there. It lives in src/, and CDD_ROOT is
+# that dir's PARENT — so mirror the layout: $cfg/src/common.sh → CDD_ROOT=$cfg.
+cfg="$WORK/cfg"; mkdir -p "$cfg/src"; cp "$REPO/src/common.sh" "$cfg/src/common.sh"
+bp() { env -i DEV_AGENT_HOME="${1-}" bash -c '. "$1"; echo "$BASE_PATH"' _ "$cfg/src/common.sh"; }
 assert_eq "default BASE_PATH is ./.dev-agent" "$cfg/.dev-agent" "$(bp '')"
 assert_eq "DEV_AGENT_HOME overrides BASE_PATH" "/custom/home" "$(bp /custom/home)"
 printf 'DEV_AGENT_HOME=%s/from-dotenv\n' "$WORK" > "$cfg/.env"
-assert_eq "./.env sets DEV_AGENT_HOME" "$WORK/from-dotenv" "$(env -i bash -c '. "$1"; echo "$BASE_PATH"' _ "$cfg/common.sh")"
+assert_eq "./.env sets DEV_AGENT_HOME" "$WORK/from-dotenv" "$(env -i bash -c '. "$1"; echo "$BASE_PATH"' _ "$cfg/src/common.sh")"
 # A failing COMMAND in ./.env (as opposed to an explicit `exit`, which would
 # terminate the shell directly) is what common.sh's set +e guard converts into
 # a loud exit 1 instead of a silent abort under the caller's set -e.
 printf 'false\n' > "$cfg/.env"
-out=$(env -i bash -c 'set -e; . "$1"' _ "$cfg/common.sh" 2>&1); rc=$?
+out=$(env -i bash -c 'set -e; . "$1"' _ "$cfg/src/common.sh" 2>&1); rc=$?
 assert_rc "broken ./.env aborts with exit 1" 1 "$rc"
 assert_contains "broken ./.env reports the failure" "$out" "./.env exited non-zero"
 rm -f "$cfg/.env"
 
 # CONTAINERS_PATH resolution (mirrors RULES_PATH: override → $BASE_PATH/containers → repo)
-cpath() { env -i DEV_AGENT_HOME="${1-}" CONTAINERS_PATH="${2-}" bash -c '. "$1"; echo "$CONTAINERS_PATH"' _ "$cfg/common.sh"; }
+cpath() { env -i DEV_AGENT_HOME="${1-}" CONTAINERS_PATH="${2-}" bash -c '. "$1"; echo "$CONTAINERS_PATH"' _ "$cfg/src/common.sh"; }
 assert_eq "default CONTAINERS_PATH is the repo's containers/" "$cfg/containers" "$(cpath '' '')"
 dah="$WORK/dah-cp"; mkdir -p "$dah/containers"
 assert_eq "\$BASE_PATH/containers wins when it exists" "$dah/containers" "$(cpath "$dah" '')"
@@ -92,7 +93,7 @@ assert_eq "CONTAINERS_PATH env override wins over everything" "/my/private/manif
 
 # ────────────────────────────────────────────────────────────────────────────
 echo "── allow-egress.sh ──"
-run_ae() { ( cd "$REPO" && PATH="$WORK/aebin:$PATH" bash allow-egress.sh "$@" ) 2>&1; }
+run_ae() { ( cd "$REPO" && PATH="$WORK/aebin:$PATH" bash bin/allow-egress.sh "$@" ) 2>&1; }
 # docker mock: inspect succeeds (container "exists"), reports NOT running so the
 # live-apply path is skipped; ps -a prints nothing.
 mkdir -p "$WORK/aebin"
@@ -110,7 +111,7 @@ chmod +x "$WORK/aebin/docker"
 
 out=$(run_ae 2>&1); rc=$?
 assert_rc "no args → usage rc 1" 1 "$rc"
-assert_contains "no args → usage text" "$out" "Usage: ./allow-egress.sh"
+assert_contains "no args → usage text" "$out" "Usage: ./bin/allow-egress.sh"
 out=$(run_ae mycontainer --badflag); rc=$?
 assert_rc "unknown flag rc 1" 1 "$rc"
 out=$(run_ae mycontainer good.com --save bogus); rc=$?
@@ -128,7 +129,7 @@ assert_contains "valid domain echoed" "$out" "Domains:   cdn.playwright.dev"
 # ────────────────────────────────────────────────────────────────────────────
 echo "── update-agent-keys.sh ──"
 DAH="$WORK/dah"; KP="$DAH/keys/mysite"; mkdir -p "$KP"
-uak() { ( cd "$REPO" && env DEV_AGENT_HOME="$DAH" bash update-agent-keys.sh "$@" ) ; }
+uak() { ( cd "$REPO" && env DEV_AGENT_HOME="$DAH" bash bin/update-agent-keys.sh "$@" ) ; }
 
 uak mysite claude OBSIDIAN_ANNOTATED_KEY sekret >/dev/null
 assert_eq "set writes VAR to <agent>.env" "OBSIDIAN_ANNOTATED_KEY=sekret" "$(cat "$KP/claude.env")"
@@ -167,17 +168,17 @@ RDAH="$WORK/rdah"; mkdir -p "$RDAH"; SEC="$RDAH/secrets.env"
 run_svc() { ( cd "$REPO" && env DEV_AGENT_HOME="$RDAH" DOCKER_LOG="$WORK/dockerlog" PATH="$WORK/rbin:$PATH" bash "$1" ) ; }
 
 : > "$WORK/dockerlog"
-run_svc run-gateway-coding.sh >/dev/null 2>&1 || true
+run_svc bin/run-gateway-coding.sh >/dev/null 2>&1 || true
 assert_contains "gateway self-generates its token into secrets.env" "$(cat "$SEC")" "MCP_GATEWAY_TOKEN=DETERMINISTICTOKEN"
 assert_contains "gateway launches docker with the token in env" "$(cat "$WORK/dockerlog")" "AUTH=DETERMINISTICTOKEN"
 assert_contains "gateway runs the coding profile on 8811" "$(cat "$WORK/dockerlog")" "gateway run --profile coding --transport streaming --port 8811"
 
 # idempotent: a preset token is not regenerated
 printf 'MCP_GATEWAY_TOKEN=PRESET\n' > "$SEC"; : > "$WORK/dockerlog"
-run_svc run-gateway-coding.sh >/dev/null 2>&1 || true
+run_svc bin/run-gateway-coding.sh >/dev/null 2>&1 || true
 assert_eq "preset token kept (one line, unchanged)" "MCP_GATEWAY_TOKEN=PRESET" "$(cat "$SEC")"
 assert_contains "preset token passed to docker" "$(cat "$WORK/dockerlog")" "AUTH=PRESET"
-# run-proxyman-bridge.sh and run-research-browser.sh share this exact
+# bin/run-proxyman-bridge.sh and bin/run-research-browser.sh share this exact
 # generate-if-missing+persist logic, but each gates on a macOS app binary
 # (/Applications/…) FIRST, so they can't reach the token step on a Linux host —
 # gateway (no such gate) is the representative test for the shared pattern.

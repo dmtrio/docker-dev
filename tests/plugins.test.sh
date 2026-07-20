@@ -216,7 +216,7 @@ grep -qF -- "$DOMAIN_BODY" bin/allow-egress.sh && grep -qF -- "$DOMAIN_BODY" src
 SHIM_LIST="claude pi gemini cursor-agent codex"
 grep -qF "for a in $SHIM_LIST; do" Dockerfile \
     && grep -qF "SHIM_AGENTS=\"$SHIM_LIST\"" up.sh \
-    && grep -qF "SHIM_AGENTS=\"$SHIM_LIST\"" update-agent-keys.sh \
+    && grep -qF "SHIM_AGENTS=\"$SHIM_LIST\"" bin/update-agent-keys.sh \
     && pass "shim-agent list matches across Dockerfile, up.sh, update-agent-keys.sh" \
     || fail "shim-agent list drifted (Dockerfile ↔ up.sh ↔ update-agent-keys.sh)"
 # ...and it must set-equal manifest.py's AGENT_NAMES (the agents agent_secrets
