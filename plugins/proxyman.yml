@@ -1,5 +1,5 @@
 # plugins/proxyman.yml — a REMOTE MCP server (HTTP) reached on the docker host
-# (run-proxyman-bridge.sh — Proxyman traffic capture). No `install:` block:
+# (bin/run-proxyman-bridge.sh — Proxyman traffic capture). No `install:` block:
 # nothing is baked, only `url:` config. Enable per container with:
 #
 #   plugins: [proxyman]
@@ -14,7 +14,7 @@
 host_port: 8813                        # folds into HOST_MCP_PORTS (firewall grant)
 
 secrets:
-  PROXYMAN_BRIDGE_KEY: {scope: env, hint: "proxyman (run run-proxyman-bridge.sh once)"}
+  PROXYMAN_BRIDGE_KEY: {scope: env, hint: "proxyman (run bin/run-proxyman-bridge.sh once)"}
 
 mcp:
   proxyman:

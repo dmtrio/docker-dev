@@ -15,7 +15,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-. "$SCRIPT_DIR/common.sh"   # sources ./.env, sets BASE_PATH (the dev-agent home)
+. "$SCRIPT_DIR/src/common.sh"   # sources ./.env, sets BASE_PATH (the dev-agent home)
 
 NAME="$1"
 if [ -z "$NAME" ]; then
@@ -81,9 +81,9 @@ DERIVED=$(
 )
 eval "$DERIVED"
 
-COMPOSE_FILES="-f $SCRIPT_DIR/docker-compose.local.yml"
-[ -n "$SSH_PORT" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.ssh.yml"
-[ "$REMOTE_MOSH" = "true" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/docker-compose.mosh.yml"
+COMPOSE_FILES="-f $SCRIPT_DIR/compose/docker-compose.local.yml"
+[ -n "$SSH_PORT" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/compose/docker-compose.ssh.yml"
+[ "$REMOTE_MOSH" = "true" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/compose/docker-compose.mosh.yml"
 
 # ── Compose derived credentials (keys/<name>/ is rebuilt from scratch) ───────
 KEYS_PATH="$BASE_PATH/keys/$NAME"
@@ -283,7 +283,7 @@ EOF
 fi
 '
 
-docker cp "$SCRIPT_DIR/workspace.CLAUDE.md" "dev-agent-$NAME:/workspace/CLAUDE.md"
+docker cp "$SCRIPT_DIR/docs/workspace.CLAUDE.md" "dev-agent-$NAME:/workspace/CLAUDE.md"
 docker exec "dev-agent-$NAME" chown coder:coder /workspace/CLAUDE.md
 
 # ── Global rules fan-out (symlinks into the read-only /agent-rules mount) ────

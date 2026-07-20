@@ -128,7 +128,7 @@ its token into `secrets.env` on first run.
 ```yaml
 host_port: 8811                          # firewall grant for host.docker.internal:8811
 secrets:
-  MCP_GATEWAY_TOKEN: {scope: env, hint: "gateway (run run-gateway-coding.sh once)"}
+  MCP_GATEWAY_TOKEN: {scope: env, hint: "gateway (run bin/run-gateway-coding.sh once)"}
 mcp:
   coding:
     url: http://host.docker.internal:8811/mcp
@@ -139,9 +139,9 @@ Shipped remote plugins (each needs its host service started once):
 
 | Plugin | Port | Mac-side service | Token |
 |---|---|---|---|
-| `gateway` | 8811 | `run-gateway-coding.sh` — headless Playwright via Docker MCP gateway | `MCP_GATEWAY_TOKEN` |
-| `proxyman` | 8813 | `run-proxyman-bridge.sh` — Proxyman traffic capture | `PROXYMAN_BRIDGE_KEY` |
-| `browser` | 8814 | `run-research-browser.sh` — watchable desktop Brave/Chrome, isolated profile | `RESEARCH_BROWSER_KEY` |
+| `gateway` | 8811 | `bin/run-gateway-coding.sh` — headless Playwright via Docker MCP gateway | `MCP_GATEWAY_TOKEN` |
+| `proxyman` | 8813 | `bin/run-proxyman-bridge.sh` — Proxyman traffic capture | `PROXYMAN_BRIDGE_KEY` |
+| `browser` | 8814 | `bin/run-research-browser.sh` — watchable desktop Brave/Chrome, isolated profile | `RESEARCH_BROWSER_KEY` |
 
 Two independent axes, deliberately split:
 
@@ -169,7 +169,7 @@ First plugin: **serena** (`github.com/oraios/serena`) — semantic code
 retrieval + editing over LSP. It lazily downloads a language server per
 language on first use; github/npm/pythonhosted are already allowlisted
 (Python/TS/JS) and the plugin adds the Azure-blob hosts. If some other
-language's download is blocked, add the host live with `allow-egress.sh`.
+language's download is blocked, add the host live with `bin/allow-egress.sh`.
 
 ## Identity model
 
@@ -209,30 +209,37 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
 
 ## Repo map
 
-- `up.sh` / `down.sh` — container lifecycle from manifests
-- `common.sh` — shared path resolution (sourced by the scripts; not run directly)
+- `up.sh` / `down.sh` — container lifecycle from manifests (the two entry points
+  you run from the repo root)
 - `containers/` — manifests (`TEMPLATE.yml` to copy; your own are gitignored)
 - `plugins/` — drop-in local MCP tools (one `<name>.yml` each: install / mcp /
   egress), baked at image build, wired per container via the manifest's
   `plugins:` list
 - `rules/` — bundled default agent rules & skills (override via `RULES_PATH`)
+- `bin/` — host commands you run (occasionally; `up.sh` / `down.sh` are the daily
+  ones and stay at the root):
+  - `run-gateway-coding.sh` / `run-proxyman-bridge.sh` / `run-research-browser.sh`
+    — Mac-side capability services (start once, leave running)
+  - `allow-egress.sh` — add egress domains to a running container (no restart)
+  - `update-agent-keys.sh` — temporary per-agent key override; durable changes
+    go in secrets.env
+- `src/` — internal source, never run directly:
+  - `common.sh` — shared path resolution (sourced by the scripts)
+  - `manifest.py` — host-side manifest validation; `wire_plugins.py` — the
+    agent-config writer `up.sh` execs after boot
+  - `entrypoint.sh`, `init-firewall.sh`, `tmux*`, `mosh-server-wrapper.sh` —
+    baked into the image
+- `compose/` — `docker-compose.local.yml` (base) plus the `ssh.yml` / `mosh.yml`
+  overlays `up.sh` applies for a manifest's `ssh:` / `remote.mosh` settings
+- `docs/` — `script.md` (every script, grouped by lifecycle), `TIPS.md`,
+  `workspace.CLAUDE.md` (copied into each container as `/workspace/CLAUDE.md`)
 - `tests/` — host-runnable checks (`plugins.test.sh` — yq + jq + python3;
   the manifest validation and wiring logic are unit-tested in
   `test_manifest.py` / `test_wire_plugins.py`)
-- `Dockerfile`, `docker-compose.local.yml`, `workspace.CLAUDE.md`,
-  `src/` (`entrypoint.sh`, `init-firewall.sh`, `manifest.py` — host-side
-  manifest validation, `wire_plugins.py` — the agent-config writer `up.sh`
-  execs after boot) — the image and its contracts
-- `run-*.sh` — host-side capability services
-- `allow-egress.sh` — add egress domains to a running container (no restart)
-- `update-agent-keys.sh` — temporary per-agent key override; durable changes
-  go in secrets.env
+- `Dockerfile` — the shared image and its contracts
 - `secrets.env.example` — template for your `secrets.env`
 - `.env` (gitignored) — optional `DEV_AGENT_HOME` / `RULES_PATH` /
   `DEV_AGENT_SUBNET` overrides
-- `docker-compose.ssh.yml` / `docker-compose.mosh.yml` — overlays applied
-  automatically for a manifest's `ssh:` / `remote.mosh` settings
-- `script.md` — every script, grouped by lifecycle
 
 ## Remote hosts: homelab (Unraid) & VPS
 

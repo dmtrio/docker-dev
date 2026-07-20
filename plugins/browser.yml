@@ -1,5 +1,5 @@
 # plugins/browser.yml — a REMOTE MCP server (HTTP) reached on the docker host
-# (run-research-browser.sh — a watchable desktop browser the agent drives). No
+# (bin/run-research-browser.sh — a watchable desktop browser the agent drives). No
 # `install:` block: nothing is baked, only `url:` config. Enable per container:
 #
 #   plugins: [browser]
@@ -14,7 +14,7 @@
 host_port: 8814                        # folds into HOST_MCP_PORTS (firewall grant)
 
 secrets:
-  RESEARCH_BROWSER_KEY: {scope: env, hint: "browser (run run-research-browser.sh once)"}
+  RESEARCH_BROWSER_KEY: {scope: env, hint: "browser (run bin/run-research-browser.sh once)"}
 
 mcp:
   browser:

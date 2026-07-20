@@ -1,5 +1,5 @@
 #!/bin/bash
-# allow-egress.sh <container> <domain> [<domain> ...] [--save yml|firewall|none]
+# bin/allow-egress.sh <container> <domain> [<domain> ...] [--save yml|firewall|none]
 #
 # Add domains to a running agent container's egress allowlist WITHOUT a rebuild
 # or a container restart. Mirrors what init-firewall.sh does at boot: appends
@@ -15,13 +15,14 @@
 #   none      → live only
 # Pass --save <target> to skip the prompt.
 #
-#   ./allow-egress.sh coding-personal-site cdn.playwright.dev playwright.download.prss.microsoft.com
+#   ./bin/allow-egress.sh coding-personal-site cdn.playwright.dev playwright.download.prss.microsoft.com
 #
 # Requires: docker; yq only for the `yml` save target.
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"   # this file lives in bin/
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"                     # repo root (containers/, src/, etc.)
 
 # ── Parse args ────────────────────────────────────────────────────────────────
 SAVE=""          # yml | firewall | none | "" (ask)
@@ -42,7 +43,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$RAW" ] || [ ${#DOMAINS[@]} -eq 0 ]; then
-    echo "Usage: ./allow-egress.sh <container> <domain> [<domain> ...] [--save yml|firewall|none]"
+    echo "Usage: ./bin/allow-egress.sh <container> <domain> [<domain> ...] [--save yml|firewall|none]"
     exit 1
 fi
 case "${SAVE:-}" in yml|firewall|none|"") ;; *) echo "Error: --save must be yml, firewall, or none"; exit 1 ;; esac
@@ -52,7 +53,7 @@ case "${SAVE:-}" in yml|firewall|none|"") ;; *) echo "Error: --save must be yml,
 # name (dev-agent-coding-personal-site); normalise to both.
 SHORT="${RAW#dev-agent-}"
 CONTAINER="dev-agent-$SHORT"
-MANIFEST="$SCRIPT_DIR/containers/$SHORT.yml"
+MANIFEST="$ROOT_DIR/containers/$SHORT.yml"
 
 command -v docker >/dev/null || { echo "Error: docker not found"; exit 1; }
 
@@ -143,7 +144,7 @@ save_yml() {
 }
 
 save_firewall() {
-    local FW="$SCRIPT_DIR/src/init-firewall.sh"
+    local FW="$ROOT_DIR/src/init-firewall.sh"
     [ -f "$FW" ] || { echo "  ✗ $FW not found"; return 1; }
     for d in "${DOMAINS[@]}"; do
         # Match a bare zone line (one domain per line inside ALLOWED_ZONES).
