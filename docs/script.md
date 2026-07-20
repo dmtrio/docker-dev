@@ -1,16 +1,17 @@
 # Scripts
 
 Every script in this repo, grouped by when you reach for it. All are run from
-the repo root on the host (macOS or Linux) unless noted. Names in `<>` are
-placeholders; `<name>` is a manifest/container short name (the container itself
-is `dev-agent-<name>`).
+the repo root on the host (macOS or Linux) unless noted — `up.sh` / `down.sh`
+live at the root; the other host commands live in `bin/` (so you invoke them as
+`bin/<name>.sh`). Names in `<>` are placeholders; `<name>` is a
+manifest/container short name (the container itself is `dev-agent-<name>`).
 
 The one non-script prerequisite: `secrets.env` holds every secret value (chmod
 600, never mounted). By default it's the gitignored `./.dev-agent/secrets.env`;
 copy `secrets.env.example` to fill it in. `up.sh` composes per-container
 credentials from it according to each manifest.
 
-All the scripts below source `common.sh` (not run directly), which resolves the
+All the scripts below source `src/common.sh` (not run directly), which resolves the
 "dev-agent home" — where secrets/keys/artifacts live. It defaults to a
 gitignored `./.dev-agent/`; override via `DEV_AGENT_HOME` / `RULES_PATH` in a
 gitignored `./.env` at the repo root (keeps your own setup working).
@@ -28,13 +29,13 @@ survive.
 
 | Script | Serves | Port | Token (auto-seeded) |
 | --- | --- | --- | --- |
-| `run-gateway-coding.sh` | The `coding` MCP profile (headless Playwright) | 8811 | `MCP_GATEWAY_TOKEN` |
-| `run-proxyman-bridge.sh` | Proxyman's stdio MCP over HTTP (Proxyman.app must be open) | 8813 | `PROXYMAN_BRIDGE_KEY` |
-| `run-research-browser.sh [brave\|chrome]` | A watchable, isolated-profile research browser | 8814 | `RESEARCH_BROWSER_KEY` |
+| `bin/run-gateway-coding.sh` | The `coding` MCP profile (headless Playwright) | 8811 | `MCP_GATEWAY_TOKEN` |
+| `bin/run-proxyman-bridge.sh` | Proxyman's stdio MCP over HTTP (Proxyman.app must be open) | 8813 | `PROXYMAN_BRIDGE_KEY` |
+| `bin/run-research-browser.sh [brave\|chrome]` | A watchable, isolated-profile research browser | 8814 | `RESEARCH_BROWSER_KEY` |
 
 ```bash
-./run-gateway-coding.sh          # then leave it running
-./run-research-browser.sh brave  # optional arg picks the browser (default: Brave, else Chrome)
+./bin/run-gateway-coding.sh          # then leave it running
+./bin/run-research-browser.sh brave  # optional arg picks the browser (default: Brave, else Chrome)
 ```
 
 ## Creating / updating a container
@@ -56,7 +57,7 @@ manifest, rerun, done.
 
 Operate on a live container without a rebuild or restart.
 
-- **`./allow-egress.sh <container> <domain> [<domain> ...] [--save yml|firewall|none]`**
+- **`./bin/allow-egress.sh <container> <domain> [<domain> ...] [--save yml|firewall|none]`**
   — add domains to the running container's egress allowlist immediately. Appends
   `ipset=/<domain>/allowed-domains` zones to its `/etc/dnsmasq.conf` and reloads
   only dnsmasq (the ipset and iptables rules stay up). The live change is
@@ -66,11 +67,11 @@ Operate on a live container without a rebuild or restart.
   `none` → live only. Validates every domain first.
 
   ```bash
-  ./allow-egress.sh my-app cdn.playwright.dev api.stripe.com
-  ./allow-egress.sh my-app api.stripe.com --save yml   # skip the prompt
+  ./bin/allow-egress.sh my-app cdn.playwright.dev api.stripe.com
+  ./bin/allow-egress.sh my-app api.stripe.com --save yml   # skip the prompt
   ```
 
-- **`./update-agent-keys.sh <container> <agent|common> <VAR> [value]`** — TEMPORARY
+- **`./bin/update-agent-keys.sh <container> <agent|common> <VAR> [value]`** — TEMPORARY
   override of one MCP credential for one agent, picked up the next time that agent
   starts (the shims read `~/.agent-keys` at launch). No arguments beyond the
   container name lists the current composed keys. Note: `$DEV_AGENT_HOME/keys/<name>/`
@@ -78,8 +79,8 @@ Operate on a live container without a rebuild or restart.
   changes in `secrets.env`/the manifest and use this only for quick experiments.
 
   ```bash
-  ./update-agent-keys.sh my-app pi OBSIDIAN_ANNOTATED_KEY   # prompts for the value
-  ./update-agent-keys.sh my-app                             # list keys
+  ./bin/update-agent-keys.sh my-app pi OBSIDIAN_ANNOTATED_KEY   # prompts for the value
+  ./bin/update-agent-keys.sh my-app                             # list keys
   ```
 
 ## Teardown & cleanup
@@ -97,17 +98,19 @@ Operate on a live container without a rebuild or restart.
 
 ---
 
-## Inside the image (`src/` — automatic, you don't run these)
+## Inside the image (baked from `src/` — automatic, you don't run these)
 
-These live in `src/`, get baked into the image by the `Dockerfile`, and run
-themselves inside the container; listed for completeness.
+The host commands above live in `bin/`; `src/` is internal source — the
+`common.sh` those commands source, the host-side `manifest.py` / `wire_plugins.py`
+`up.sh` calls, and the files below, which get baked into the image by the
+`Dockerfile` and run themselves inside the container (listed for completeness).
 
 - **`src/entrypoint.sh`** — the container's PID 1. Persists `~/.claude.json`, runs
   the firewall (fail-loud), applies git config, guarantees `/workspace/main`
   exists, then either starts sshd (`SSH_ENABLED=true`) or idles for attach mode.
 - **`src/init-firewall.sh`** — builds the default-deny egress allowlist at boot
   (GitHub IP ranges + dnsmasq-mirrored zones), verifies itself, and exits non-zero
-  on failure so the container never runs with open egress. `allow-egress.sh` edits
+  on failure so the container never runs with open egress. `bin/allow-egress.sh` edits
   the same zone list live; the base `ALLOWED_ZONES` here is the durable default.
 - **`src/tmux.conf` / `src/tmux-landing.bashrc`** — remote access (RFC 04):
   mobile-friendly tmux defaults, and the guarded snippet that lands interactive

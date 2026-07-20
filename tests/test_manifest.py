@@ -28,17 +28,17 @@ OTHER = {"install": "x", "mcp": {"other-tool": {"command": "python3"}}, "egress"
 # an env-scoped secret slot. Mirror the shipped plugins/*.yml files.
 GATEWAY = {"host_port": 8811,
            "secrets": {"MCP_GATEWAY_TOKEN": {"scope": "env",
-                       "hint": "gateway (run run-gateway-coding.sh once)"}},
+                       "hint": "gateway (run bin/run-gateway-coding.sh once)"}},
            "mcp": {"coding": {"url": "http://host.docker.internal:8811/mcp",
                               "headers": {"Authorization": "Bearer ${MCP_GATEWAY_TOKEN}"}}}}
 PROXYMAN = {"host_port": 8813,
             "secrets": {"PROXYMAN_BRIDGE_KEY": {"scope": "env",
-                        "hint": "proxyman (run run-proxyman-bridge.sh once)"}},
+                        "hint": "proxyman (run bin/run-proxyman-bridge.sh once)"}},
             "mcp": {"proxyman": {"url": "http://host.docker.internal:8813/mcp",
                                  "headers": {"X-API-Key": "${PROXYMAN_BRIDGE_KEY}"}}}}
 BROWSER = {"host_port": 8814,
            "secrets": {"RESEARCH_BROWSER_KEY": {"scope": "env",
-                       "hint": "browser (run run-research-browser.sh once)"}},
+                       "hint": "browser (run bin/run-research-browser.sh once)"}},
            "mcp": {"browser": {"url": "http://host.docker.internal:8814/mcp",
                                "headers": {"X-API-Key": "${RESEARCH_BROWSER_KEY}"}}}}
 # Agent-scoped plugins (Plugins v2 Phase 2). OBSIDIAN is a remote server with an
@@ -432,7 +432,7 @@ class TestPluginsV2Phase1(unittest.TestCase):
         # env-scoped secret → one SLOT<tab>SOURCE<tab>HINT record
         self.assertEqual(
             d["PLUGIN_ENV_SECRETS"],
-            "MCP_GATEWAY_TOKEN\tMCP_GATEWAY_TOKEN\tgateway (run run-gateway-coding.sh once)\n")
+            "MCP_GATEWAY_TOKEN\tMCP_GATEWAY_TOKEN\tgateway (run bin/run-gateway-coding.sh once)\n")
         # remote servers add no domain egress (they dial host.docker.internal)
         self.assertEqual(d["EGRESS"], "")
 
@@ -486,7 +486,7 @@ class TestPluginsV2Phase1(unittest.TestCase):
         d = derive({"plugins": ["gateway"], "common_secrets": {"MCP_GATEWAY_TOKEN": "GW_PROD"}})
         self.assertEqual(
             d["PLUGIN_ENV_SECRETS"],
-            "MCP_GATEWAY_TOKEN\tGW_PROD\tgateway (run run-gateway-coding.sh once)\n")
+            "MCP_GATEWAY_TOKEN\tGW_PROD\tgateway (run bin/run-gateway-coding.sh once)\n")
 
     def test_common_secrets_list_passthrough(self):
         d = derive({"plugins": ["serena"], "common_secrets": ["PLAYWRIGHT_KEY"]})

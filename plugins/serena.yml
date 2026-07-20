@@ -37,6 +37,6 @@ mcp:
 # common Python/TS/JS servers; the hosts below cover the Azure-blob-hosted ones
 # (.NET, some others). If a language's server still fails to download, read the
 # firewall's blocked host from the error and add it live with:
-#   ./allow-egress.sh dev-agent-<name> <host> --save yml
+#   ./bin/allow-egress.sh dev-agent-<name> <host> --save yml
 egress:
   - blob.core.windows.net

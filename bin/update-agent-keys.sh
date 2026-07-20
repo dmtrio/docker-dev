@@ -9,20 +9,20 @@
 # for quick between-runs experiments.
 #
 # Usage:
-#   ./update-agent-keys.sh <container> <agent|common> <VAR> [value]
-#   ./update-agent-keys.sh <container>                       # list keys
+#   ./bin/update-agent-keys.sh <container> <agent|common> <VAR> [value]
+#   ./bin/update-agent-keys.sh <container>                       # list keys
 #
 # Examples:
-#   ./update-agent-keys.sh mysite claude OBSIDIAN_ANNOTATED_KEY   # prompts
-#   ./update-agent-keys.sh mysite pi OBSIDIAN_ANNOTATED_KEY      # pi's own key
-#   ./update-agent-keys.sh mysite common MCP_GATEWAY_TOKEN       # all agents
+#   ./bin/update-agent-keys.sh mysite claude OBSIDIAN_ANNOTATED_KEY   # prompts
+#   ./bin/update-agent-keys.sh mysite pi OBSIDIAN_ANNOTATED_KEY      # pi's own key
+#   ./bin/update-agent-keys.sh mysite common MCP_GATEWAY_TOKEN       # all agents
 #
 # Agents: claude, pi, gemini, cursor-agent (or 'common' for shared
 # capability tokens like the gateway/bridge secrets).
 
 set -e
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/common.sh"   # sets BASE_PATH
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../src/common.sh"   # sets BASE_PATH
 CONTAINER="$1"
 AGENT="$2"
 VAR="$3"

@@ -10,7 +10,9 @@
 # Pure config resolution — no filesystem side effects, so sourcing this on a
 # usage/error path (e.g. `./up.sh` with no args) creates nothing. Callers
 # `mkdir -p "$BASE_PATH"` themselves once they've decided to proceed.
-CDD_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# This file lives in src/; the repo root (where ./.env and ./.dev-agent live)
+# is its PARENT directory.
+CDD_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 if [ -f "$CDD_ROOT/.env" ]; then
     # Disable errexit around the source: a failing line INSIDE ./.env would
     # otherwise trip the caller's set -e and abort silently before we report

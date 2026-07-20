@@ -29,20 +29,20 @@ for f in up.sh src/entrypoint.sh src/init-firewall.sh src/tmux-notify.sh src/mos
 done
 
 echo "── compose overlays"
-for f in docker-compose.local.yml docker-compose.ssh.yml docker-compose.mosh.yml; do
+for f in compose/docker-compose.local.yml compose/docker-compose.ssh.yml compose/docker-compose.mosh.yml; do
     yq '.' "$f" >/dev/null 2>&1 && pass "$f parses" || fail "$f is not valid YAML"
 done
-[ "$(yq '.networks.default.name' docker-compose.local.yml)" = "dev-agent-net" ] \
+[ "$(yq '.networks.default.name' compose/docker-compose.local.yml)" = "dev-agent-net" ] \
     && pass "local compose joins the shared dev-agent-net bridge" \
     || fail "local compose is missing the shared-network config"
-[ "$(yq '.networks.default.external' docker-compose.local.yml)" = "true" ] \
+[ "$(yq '.networks.default.external' compose/docker-compose.local.yml)" = "true" ] \
     && pass "shared network is external (created by up.sh, not compose)" \
     || fail "shared network must be external: true"
-yq -r '.services.dev-agent.environment[]' docker-compose.ssh.yml | grep -q '^REMOTE_TMUX=' \
+yq -r '.services.dev-agent.environment[]' compose/docker-compose.ssh.yml | grep -q '^REMOTE_TMUX=' \
     && pass "ssh overlay passes REMOTE_TMUX" \
     || fail "ssh overlay is missing REMOTE_TMUX"
 for var in NTFY_URL NTFY_TOPIC; do
-    yq -r '.services.dev-agent.environment[]' docker-compose.ssh.yml | grep -q "^$var=" \
+    yq -r '.services.dev-agent.environment[]' compose/docker-compose.ssh.yml | grep -q "^$var=" \
         && pass "ssh overlay passes $var" \
         || fail "ssh overlay is missing $var"
 done
@@ -51,11 +51,11 @@ echo "── mosh port-range agreement (up.sh is the source; defaults must align
 # The overlay carries fallbacks (${MOSH_PORTS:-...} / ${MOSH_PORTS_DASH:-...})
 # for the values up.sh computes from remote.mosh_ports. All defaults — env
 # (colon form), publish (dash form), wrapper, up.sh — must be one range.
-ENV_DEFAULT=$(yq -r '.services.dev-agent.environment[]' docker-compose.mosh.yml | sed -n 's/^MOSH_PORTS=${MOSH_PORTS:-\(.*\)}$/\1/p')
+ENV_DEFAULT=$(yq -r '.services.dev-agent.environment[]' compose/docker-compose.mosh.yml | sed -n 's/^MOSH_PORTS=${MOSH_PORTS:-\(.*\)}$/\1/p')
 [ "$ENV_DEFAULT" = "60000:60010" ] \
     && pass "mosh overlay env default is 60000:60010" \
     || fail "mosh overlay env default unexpected: '$ENV_DEFAULT'"
-DASH_DEFAULT=$(yq -r '.services.dev-agent.ports[0]' docker-compose.mosh.yml | grep -o '{MOSH_PORTS_DASH:-[0-9-]*}' | head -1 | sed 's/.*:-\([0-9-]*\)}/\1/')
+DASH_DEFAULT=$(yq -r '.services.dev-agent.ports[0]' compose/docker-compose.mosh.yml | grep -o '{MOSH_PORTS_DASH:-[0-9-]*}' | head -1 | sed 's/.*:-\([0-9-]*\)}/\1/')
 [ "$DASH_DEFAULT" = "${ENV_DEFAULT/:/-}" ] \
     && pass "publish default ($DASH_DEFAULT) matches env default" \
     || fail "publish default '$DASH_DEFAULT' != env default '${ENV_DEFAULT/:/-}'"
@@ -160,7 +160,7 @@ up.sh	.remote.tmux // false
 up.sh	.remote.mosh // false
 up.sh	.remote.notify
 up.sh	.remote.mosh_ports
-up.sh	docker-compose.mosh.yml
+up.sh	compose/docker-compose.mosh.yml
 up.sh	dev-agent-net
 up.sh	remote.notify requires remote.tmux
 up.sh	s|^[A-Za-z]+://||; s|/.*$||; s|^.*@||; s|:[0-9]+$||

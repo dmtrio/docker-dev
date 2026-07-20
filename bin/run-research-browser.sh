@@ -1,5 +1,5 @@
 #!/bin/bash
-# run-research-browser.sh [brave|chrome]
+# bin/run-research-browser.sh [brave|chrome]
 # Launches a WATCHABLE agent browser (for research-flavored containers)
 # and bridges it for dev containers on localhost:8814.
 #
@@ -24,7 +24,7 @@ case "${1:-auto}" in
 esac
 [ -d "$APP" ] || { echo "ERROR: browser not found at $APP"; exit 1; }
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/common.sh"   # sets BASE_PATH
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../src/common.sh"   # sets BASE_PATH
 PROFILE_DIR="$BASE_PATH/research-browser"
 CDP_PORT=9222
 BRIDGE_PORT=8814

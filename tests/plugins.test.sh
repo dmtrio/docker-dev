@@ -207,7 +207,7 @@ grep -qF "OBSIDIAN_KEY" src/manifest.py && grep -qF "OBSIDIAN_WATCH_KEY" src/man
     && pass "manifest.py uses the same identity-key prefixes up.sh's compgen scans" \
     || fail "identity-key prefixes drifted between up.sh and manifest.py"
 DOMAIN_BODY='([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+'
-grep -qF -- "$DOMAIN_BODY" allow-egress.sh && grep -qF -- "$DOMAIN_BODY" src/manifest.py \
+grep -qF -- "$DOMAIN_BODY" bin/allow-egress.sh && grep -qF -- "$DOMAIN_BODY" src/manifest.py \
     && pass "hostname rule matches between manifest.py and allow-egress.sh" \
     || fail "hostname rule drifted between manifest.py and allow-egress.sh"
 

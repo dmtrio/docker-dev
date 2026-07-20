@@ -5,7 +5,7 @@
 #
 #   plugins: [gateway]
 #
-# The server runs on the HOST (run-gateway-coding.sh — a headless Playwright
+# The server runs on the HOST (bin/run-gateway-coding.sh — a headless Playwright
 # MCP gateway). up.sh grants the container firewall access to host_port and
 # wires the `mcp` entry into Claude's .mcp.json (the ${VAR} header ref expands
 # from the shim env). The token is a container-wide (env-scoped) secret: every
@@ -20,7 +20,7 @@ host_port: 8811                        # folds into HOST_MCP_PORTS (firewall gra
 # by every agent, delivered via the shims' common.env. `hint` is shown verbatim
 # in up.sh's "not in secrets.env" warning when the source var is unset.
 secrets:
-  MCP_GATEWAY_TOKEN: {scope: env, hint: "gateway (run run-gateway-coding.sh once)"}
+  MCP_GATEWAY_TOKEN: {scope: env, hint: "gateway (run bin/run-gateway-coding.sh once)"}
 
 # Remote server: `url:` (not `command:`) — reached over HTTP at the host port.
 mcp:
