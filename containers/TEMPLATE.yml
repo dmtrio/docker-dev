@@ -74,9 +74,9 @@ capabilities:
 # firewall the host port and wires the server into Claude's .mcp.json, with the
 # service token delivered from secrets.env. Each needs its Mac-side service
 # started once (self-generates the token):
-#   gateway  → 8811, MCP_GATEWAY_TOKEN     (bin/run-gateway-coding.sh — headless Playwright)
-#   proxyman → 8813, PROXYMAN_BRIDGE_KEY   (bin/run-proxyman-bridge.sh — traffic capture)
-#   browser  → 8814, RESEARCH_BROWSER_KEY  (bin/run-research-browser.sh — watchable desktop browser)
+#   gateway  → 8811, MCP_GATEWAY_TOKEN     (./service.sh gateway  — headless Playwright)
+#   proxyman → 8813, PROXYMAN_BRIDGE_KEY   (./service.sh proxyman — traffic capture)
+#   browser  → 8814, RESEARCH_BROWSER_KEY  (./service.sh browser  — watchable desktop browser)
 #
 #   plugins: [serena, gateway, obsidian-annotated]   # serena: local; others remote
 plugins: []

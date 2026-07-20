@@ -1,4 +1,4 @@
-# plugins/annotated-watch.yml — an ENV-ONLY plugin: a single agent-scoped
+# plugins/annotated-watch/plugin.yml — an ENV-ONLY plugin: a single agent-scoped
 # secret slot and NO `mcp:` server at all. It exists purely to deliver a
 # per-agent key into an agent's shim environment.
 #

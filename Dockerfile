@@ -116,11 +116,13 @@ RUN if [ "$INSTALL_CODEX" = "true" ]; then \
     fi
 
 # ── Plugins (drop-in local MCP tools) ────────────────────────────────────────
-# Every plugins/<name>.yml is baked into the shared image here. A LOCAL (stdio)
+# Each plugin is a directory: plugins/<name>/plugin.yml (+ optional host-only
+# run.sh). Every plugin.yml is baked into the shared image here. A LOCAL (stdio)
 # plugin carries an `install:` block that runs at build time (full network) so
 # the binary is present offline behind the runtime egress firewall. A REMOTE
 # plugin (gateway/proxyman/browser — url: config, no binary) has no install:
 # and is skipped here; nothing is baked, it's pure config wired by up.sh.
+# The host-only run.sh launchers are excluded from the image via .dockerignore.
 # Which containers actually USE a plugin is a separate, per-container decision:
 # up.sh wires mcp + egress only for the names in that manifest's `plugins:`
 # list. Adding a tool = adding one file; this loop never changes. Runs as
@@ -139,9 +141,9 @@ RUN sudo curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERS
 COPY --chown=$USERNAME:$USERNAME plugins /opt/plugins
 RUN set -e; \
     eval "$(fnm env)"; \
-    for f in /opt/plugins/*.yml; do \
+    for f in /opt/plugins/*/plugin.yml; do \
         [ -e "$f" ] || continue; \
-        name="$(basename "$f" .yml)"; \
+        name="$(basename "$(dirname "$f")")"; \
         if ! yq -e -r '.install' "$f" > /tmp/plugin-install.sh 2>/dev/null; then \
             echo "── plugin (config-only, nothing to bake): $name"; \
             continue; \

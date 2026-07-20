@@ -6,7 +6,7 @@
 #   - common.sh             BASE_PATH resolution (default / env / ./.env / broken)
 #   - allow-egress.sh       arg parsing + strict domain validation
 #   - update-agent-keys.sh  per-agent key edits (set / remove / common / list)
-#   - run-*.sh              host launchers' token generate-if-missing + persist
+#   - plugins/*/run.sh      host launchers' token generate-if-missing + persist
 # Out of scope: container-internal scripts (init-firewall.sh, entrypoint.sh,
 # mosh-server-wrapper.sh, tmux-*) — they run in a built container, and the
 # pure docker orchestration in up.sh (a test would only assert "docker ran").
@@ -33,8 +33,15 @@ WORK=$(cd "$(mktemp -d)" && pwd -P); trap 'rm -rf "$WORK"' EXIT
 # $DEV_AGENT_HOME — so running them from $REPO on a machine that has the
 # documented `DEV_AGENT_HOME=...` in ./.env would ignore our sandbox and write
 # to the user's REAL keys/secrets. Running them from here can't.
-SBOX="$WORK/repo"; mkdir -p "$SBOX/bin" "$SBOX/src"
+SBOX="$WORK/repo"; mkdir -p "$SBOX/bin" "$SBOX/src" "$SBOX/plugins/gateway"
 cp "$REPO"/bin/*.sh "$SBOX/bin/"; cp "$REPO"/src/common.sh "$SBOX/src/"
+# The launcher test drives gateway THROUGH service.sh (the only supported entry
+# point): service.sh sources src/common.sh, resolves BASE_PATH, and hands it to
+# plugins/<name>/run.sh in the env. Mirror that layout — service.sh at the root,
+# common.sh under src/, the launcher under plugins/gateway/. gateway is the
+# representative launcher (see the run.sh note below).
+cp "$REPO/service.sh" "$SBOX/service.sh"
+cp "$REPO"/plugins/gateway/run.sh "$SBOX/plugins/gateway/"
 
 # ────────────────────────────────────────────────────────────────────────────
 echo "── src/keyfiles.sh ──"
@@ -44,7 +51,7 @@ SHIM="claude pi gemini cursor-agent codex"
 
 d="$WORK/ck1"; mkdir -p "$d"; chmod 700 "$d"
 MCP_GATEWAY_TOKEN=gwval GH_TOKEN=ghval SRC_C=ckey SRC_P=pkey
-PES=$(printf 'MCP_GATEWAY_TOKEN\tMCP_GATEWAY_TOKEN\tgateway (run run-gateway-coding.sh once)\n')
+PES=$(printf 'MCP_GATEWAY_TOKEN\tMCP_GATEWAY_TOKEN\tgateway (run ./service.sh gateway once)\n')
 AS=$(printf 'claude\tOBSIDIAN_ANNOTATED_KEY\tSRC_C\npi\tANNOTATED_WATCH_KEY\tSRC_P\n')
 write_keyfiles "$d" "$SHIM" "$PES" "$AS" >/dev/null
 
@@ -61,9 +68,9 @@ unset MCP_GATEWAY_TOKEN GH_TOKEN SRC_C SRC_P
 
 # missing source var → warn, and the slot is NOT written
 d="$WORK/ck2"; mkdir -p "$d"; chmod 700 "$d"
-PES=$(printf 'MISSING_TOK\tMISSING_TOK\tgateway (run run-gateway-coding.sh once)\n')
+PES=$(printf 'MISSING_TOK\tMISSING_TOK\tgateway (run ./service.sh gateway once)\n')
 out=$(write_keyfiles "$d" "claude" "$PES" "")
-assert_contains "missing source warns" "$out" "MISSING_TOK not in secrets.env — gateway (run run-gateway-coding.sh once) will not authenticate"
+assert_contains "missing source warns" "$out" "MISSING_TOK not in secrets.env — gateway (run ./service.sh gateway once) will not authenticate"
 assert_eq "missing source leaves an empty file" "" "$(cat "$d/claude.env")"
 
 # agent-scoped appended AFTER shared → wins on a name collision when sourced
@@ -177,23 +184,68 @@ MOCK
 chmod +x "$WORK/rbin/openssl" "$WORK/rbin/docker"
 
 RDAH="$WORK/rdah"; mkdir -p "$RDAH"; SEC="$RDAH/secrets.env"
-run_svc() { ( cd "$SBOX" && env DEV_AGENT_HOME="$RDAH" DOCKER_LOG="$WORK/dockerlog" PATH="$WORK/rbin:$PATH" bash "$1" ) ; }
+# Drive the launcher through service.sh (the entry point): service.sh resolves
+# BASE_PATH from DEV_AGENT_HOME via common.sh and exports it for run.sh.
+run_svc() { ( cd "$SBOX" && env DEV_AGENT_HOME="$RDAH" DOCKER_LOG="$WORK/dockerlog" PATH="$WORK/rbin:$PATH" bash service.sh "$1" ) ; }
 
 : > "$WORK/dockerlog"
-run_svc bin/run-gateway-coding.sh >/dev/null 2>&1 || true
+run_svc gateway >/dev/null 2>&1 || true
 assert_contains "gateway self-generates its token into secrets.env" "$(cat "$SEC")" "MCP_GATEWAY_TOKEN=DETERMINISTICTOKEN"
 assert_contains "gateway launches docker with the token in env" "$(cat "$WORK/dockerlog")" "AUTH=DETERMINISTICTOKEN"
 assert_contains "gateway runs the coding profile on 8811" "$(cat "$WORK/dockerlog")" "gateway run --profile coding --transport streaming --port 8811"
 
+# service.sh resolves + exports BASE_PATH so run.sh needs no path of its own
+assert_contains "launcher requires BASE_PATH from service.sh" \
+    "$(cd "$SBOX" && bash plugins/gateway/run.sh 2>&1 || true)" \
+    "run this launcher via ./service.sh gateway"
+
 # idempotent: a preset token is not regenerated
 printf 'MCP_GATEWAY_TOKEN=PRESET\n' > "$SEC"; : > "$WORK/dockerlog"
-run_svc bin/run-gateway-coding.sh >/dev/null 2>&1 || true
+run_svc gateway >/dev/null 2>&1 || true
 assert_eq "preset token kept (one line, unchanged)" "MCP_GATEWAY_TOKEN=PRESET" "$(cat "$SEC")"
 assert_contains "preset token passed to docker" "$(cat "$WORK/dockerlog")" "AUTH=PRESET"
-# bin/run-proxyman-bridge.sh and bin/run-research-browser.sh share this exact
+# plugins/proxyman/run.sh and plugins/browser/run.sh share this exact
 # generate-if-missing+persist logic, but each gates on a macOS app binary
 # (/Applications/…) FIRST, so they can't reach the token step on a Linux host —
 # gateway (no such gate) is the representative test for the shared pattern.
+
+# ────────────────────────────────────────────────────────────────────────────
+echo "── service.sh (host-service dispatcher) ──"
+# A throwaway repo layout: service.sh + src/common.sh (service.sh sources it to
+# resolve BASE_PATH just before exec) + a plugin that ships a run.sh (echoes its
+# forwarded args) and one that doesn't. No ./.env, so the validation/error paths
+# never touch it and the exec path resolves BASE_PATH to $SVC/.dev-agent.
+SVC="$WORK/svc"; mkdir -p "$SVC/src" "$SVC/plugins/withsvc" "$SVC/plugins/nosvc"
+cp "$REPO/service.sh" "$SVC/service.sh"; cp "$REPO/src/common.sh" "$SVC/src/"
+cat > "$SVC/plugins/withsvc/run.sh" <<'MOCK'
+#!/bin/bash
+echo "ran withsvc args=[$*] base=${BASE_PATH:+set}"
+MOCK
+chmod +x "$SVC/plugins/withsvc/run.sh"
+: > "$SVC/plugins/nosvc/plugin.yml"
+svc() { ( cd "$SVC" && bash service.sh "$@" ) ; }
+
+out=$(svc 2>&1); rc=$?
+assert_rc "no arg exits non-zero" 1 "$rc"
+assert_contains "no arg lists services with a run.sh" "$out" "withsvc"
+assert_absent "no arg omits plugins without a run.sh" "$out" "nosvc"
+
+out=$(svc nonesuch 2>&1); rc=$?
+assert_rc "unknown plugin exits non-zero" 1 "$rc"
+assert_contains "unknown plugin names the missing dir" "$out" "no plugin named 'nonesuch'"
+
+out=$(svc ../withsvc 2>&1); rc=$?
+assert_rc "path-traversal name rejected before any fs lookup" 1 "$rc"
+assert_contains "traversal name reported as invalid" "$out" "invalid plugin name"
+
+out=$(svc nosvc 2>&1); rc=$?
+assert_rc "plugin without run.sh exits non-zero" 1 "$rc"
+assert_contains "plugin without run.sh explains why" "$out" "has no host service"
+
+out=$(svc withsvc chrome --flag 2>&1); rc=$?
+assert_rc "valid service execs run.sh (rc 0)" 0 "$rc"
+assert_contains "dispatcher forwards extra args verbatim" "$out" "ran withsvc args=[chrome --flag]"
+assert_contains "dispatcher exports BASE_PATH to the launcher" "$out" "base=set"
 
 echo ""
 if [ "$FAILURES" -gt 0 ]; then echo "FAILED: $FAILURES bash test(s)"; exit 1; fi

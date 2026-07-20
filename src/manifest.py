@@ -6,7 +6,7 @@ up.sh feeds this file yq-converted JSON on stdin and evals the derived shell
 assignments it prints:
 
     input (stdin):  line 1: the manifest as JSON (yq -o=json -I=0)
-                    then one line per plugins/*.yml: "<name>\t<json>" — or
+                    then one line per plugins/*/plugin.yml: "<name>\t<json>" — or
                     "<name>\t!" when yq could not parse that file (an error
                     only if the manifest actually lists the plugin; an
                     unlisted broken file must not block unrelated containers)
@@ -61,7 +61,7 @@ import sys
 # wire_plugins.py used to export the reserved-server-name set; as of Plugins v2
 # Phase 2 every MCP server comes from a plugin file (obsidian-annotated included),
 # so there are no reserved names and nothing is imported from it. Host ports and
-# server defs are all DATA (plugins/*.yml), not tables in code.
+# server defs are all DATA (plugins/*/plugin.yml), not tables in code.
 
 # \Z, not $: Python's $ also matches just before a trailing newline, which
 # would wave "evil.com\n" through into dnsmasq config (the old bash never saw
@@ -89,7 +89,7 @@ AGENT_SUFFIXES = (
 # The MCP-capable agents an agent_secrets binding may name.
 AGENT_NAMES = frozenset({"claude", "codex", "pi", "gemini", "cursor-agent"})
 
-# Marker for a plugins/*.yml that yq could not parse (see module docstring).
+# Marker for a plugins/*/plugin.yml that yq could not parse (see module docstring).
 UNREADABLE = object()
 
 
@@ -270,7 +270,7 @@ def derive(manifest, plugin_files, env):
         sugar_plugins.append("annotated-watch")
     if obs_refs or watch_refs:
         print("  ⚠ identities: is deprecated — bind agent-scoped secrets under "
-              "agent_secrets: (see plugins/obsidian-annotated.yml); identities: is "
+              "agent_secrets: (see plugins/obsidian-annotated/plugin.yml); identities: is "
               "sugar and will be removed", file=sys.stderr)
 
     # ── Plugins list (aggregated errors, old order) ─────────────────────
@@ -290,9 +290,9 @@ def derive(manifest, plugin_files, env):
                 f"  plugin '{p}': illegal characters (allowed: letters, digits, underscore, dash)")
             continue
         if p not in plugin_files:
-            plugin_errors.append(f"  plugin '{p}': no plugin file at plugins/{p}.yml")
+            plugin_errors.append(f"  plugin '{p}': no plugin file at plugins/{p}/plugin.yml")
         elif plugin_files[p] is UNREADABLE:
-            plugin_errors.append(f"  plugin '{p}': plugins/{p}.yml is not valid YAML (yq could not parse it)")
+            plugin_errors.append(f"  plugin '{p}': plugins/{p}/plugin.yml is not valid YAML (yq could not parse it)")
     if plugin_errors:
         raise ManifestError(
             "manifest plugins failed validation:\n" + "\n".join(plugin_errors))
@@ -391,7 +391,7 @@ def derive(manifest, plugin_files, env):
             doc = {}  # empty yaml file → null → a valid no-op plugin
         if not isinstance(doc, dict):
             raise ManifestError(
-                f"plugin '{p}': plugins/{p}.yml must be a YAML map (got a {_yaml_type(doc)})")
+                f"plugin '{p}': plugins/{p}/plugin.yml must be a YAML map (got a {_yaml_type(doc)})")
         for d in _comma_list(doc.get("egress"), f"plugin '{p}' egress"):
             if not DOMAIN_RE.match(d):
                 raise ManifestError(
@@ -632,7 +632,7 @@ def derive(manifest, plugin_files, env):
 
 
 def read_stdin_docs(stream):
-    """Line 1: manifest JSON. Then '<name>\\t<json>' per plugins/*.yml file,
+    """Line 1: manifest JSON. Then '<name>\\t<json>' per plugins/*/plugin.yml file,
     with '!' in place of the JSON when yq could not parse the file."""
     first = stream.readline()
     if not first.strip():

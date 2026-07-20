@@ -1,11 +1,14 @@
 #!/bin/bash
-# run-gateway-coding.sh — serve the 'coding' MCP profile (Playwright only)
-# on localhost:8811 for dev containers (RFC 03 tier 1).
+# plugins/gateway/run.sh — serve the 'coding' MCP profile (Playwright only)
+# on localhost:8811 for dev containers (RFC 03 tier 1). This is the gateway
+# plugin's host-side launcher; start it from the repo root with:
+#
+#   ./service.sh gateway
 #
 # Run it in tmux, or wrap in a launchd plist for boot persistence.
 # Token: MCP_GATEWAY_TOKEN in ~/dev-agent/secrets.env (self-generated on
-# first run); up.sh composes it into containers whose manifest grants
-# the gateway capability.
+# first run); up.sh composes it into containers whose manifest lists the
+# gateway plugin.
 #
 # Security posture:
 # - Binds localhost only (containers reach it via Docker Desktop's
@@ -19,7 +22,11 @@
 
 set -e
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../src/common.sh"   # sets BASE_PATH
+# BASE_PATH (the dev-agent home) is resolved by service.sh — which sources
+# src/common.sh once, at the repo root — and handed to this launcher in the
+# environment. So this script needs no path arithmetic of its own; start it via:
+#   ./service.sh gateway
+: "${BASE_PATH:?run this launcher via ./service.sh gateway (it resolves BASE_PATH)}"
 SECRETS_FILE="$BASE_PATH/secrets.env"
 [ -f "$SECRETS_FILE" ] || { mkdir -p "$(dirname "$SECRETS_FILE")"; touch "$SECRETS_FILE"; chmod 600 "$SECRETS_FILE"; }
 . "$SECRETS_FILE"

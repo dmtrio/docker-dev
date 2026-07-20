@@ -1,13 +1,16 @@
 #!/bin/bash
-# bin/run-research-browser.sh [brave|chrome]
+# plugins/browser/run.sh [brave|chrome]
 # Launches a WATCHABLE agent browser (for research-flavored containers)
-# and bridges it for dev containers on localhost:8814.
+# and bridges it for dev containers on localhost:8814. This is the browser
+# plugin's host-side launcher; start it from the repo root with:
+#
+#   ./service.sh browser          # or ./service.sh browser chrome
 #
 # - Dedicated browser instance with its OWN profile dir — none of your
 #   cookies, sessions, or extensions. Windows appear on your desktop so you
 #   can watch (and physically interrupt) everything the agent does.
 # - CDP debug port binds localhost only; the bridge requires X-API-Key.
-# - Container side: the manifest capability `browser: true` grants port 8814.
+# - Container side: listing the `browser` plugin in the manifest grants port 8814.
 #
 # Default browser: Brave if installed, else Chrome. Run in tmux/launchd.
 
@@ -24,7 +27,11 @@ case "${1:-auto}" in
 esac
 [ -d "$APP" ] || { echo "ERROR: browser not found at $APP"; exit 1; }
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../src/common.sh"   # sets BASE_PATH
+# BASE_PATH (the dev-agent home) is resolved by service.sh — which sources
+# src/common.sh once, at the repo root — and handed to this launcher in the
+# environment. So this script needs no path arithmetic of its own; start it via:
+#   ./service.sh browser
+: "${BASE_PATH:?run this launcher via ./service.sh browser (it resolves BASE_PATH)}"
 PROFILE_DIR="$BASE_PATH/research-browser"
 CDP_PORT=9222
 BRIDGE_PORT=8814

@@ -1,4 +1,4 @@
-# plugins/obsidian-annotated.yml — a REMOTE MCP server (HTTP) with an
+# plugins/obsidian-annotated/plugin.yml — a REMOTE MCP server (HTTP) with an
 # AGENT-SCOPED secret: each agent presents its OWN key, and the server is wired
 # only for agents the manifest binds. This is the Annotated Obsidian endpoint
 # (mcp-obsidian.dmetr.io) — a real internet host, reached via the egress
