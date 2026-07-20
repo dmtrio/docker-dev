@@ -22,7 +22,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"   # this file lives in bin/
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"                     # repo root (containers/, src/, etc.)
+. "$SCRIPT_DIR/../src/common.sh"   # sets CDD_ROOT (repo root) and CONTAINERS_PATH
 
 # ── Parse args ────────────────────────────────────────────────────────────────
 SAVE=""          # yml | firewall | none | "" (ask)
@@ -53,7 +53,7 @@ case "${SAVE:-}" in yml|firewall|none|"") ;; *) echo "Error: --save must be yml,
 # name (dev-agent-coding-personal-site); normalise to both.
 SHORT="${RAW#dev-agent-}"
 CONTAINER="dev-agent-$SHORT"
-MANIFEST="$ROOT_DIR/containers/$SHORT.yml"
+MANIFEST="$CONTAINERS_PATH/$SHORT.yml"
 
 command -v docker >/dev/null || { echo "Error: docker not found"; exit 1; }
 
@@ -144,7 +144,7 @@ save_yml() {
 }
 
 save_firewall() {
-    local FW="$ROOT_DIR/src/init-firewall.sh"
+    local FW="$CDD_ROOT/src/init-firewall.sh"
     [ -f "$FW" ] || { echo "  ✗ $FW not found"; return 1; }
     for d in "${DOMAINS[@]}"; do
         # Match a bare zone line (one domain per line inside ALLOWED_ZONES).
@@ -169,7 +169,7 @@ save_firewall() {
 
 if [ -z "$SAVE" ]; then
     echo "Persist permanently? (the live change above is lost when the container is recreated)"
-    echo "  [y] manifest  containers/$SHORT.yml   → this container, next ./up.sh"
+    echo "  [y] manifest  $MANIFEST   → this container, next ./up.sh"
     echo "  [f] firewall  init-firewall.sh        → ALL containers, next build"
     echo "  [s] skip                              → live only"
     printf "Choice [y/f/s]: "

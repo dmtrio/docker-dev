@@ -19,9 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 NAME="$1"
 if [ -z "$NAME" ]; then
-    echo "Usage: ./up.sh <name>    (reads containers/<name>.yml)"
+    echo "Usage: ./up.sh <name>    (reads $CONTAINERS_PATH/<name>.yml)"
     echo "Manifests:"
-    for f in "$SCRIPT_DIR/containers"/*.yml; do
+    for f in "$CONTAINERS_PATH"/*.yml; do
         [ -f "$f" ] || continue
         n=$(basename "$f" .yml)
         [ "$n" = "TEMPLATE" ] && continue
@@ -30,8 +30,11 @@ if [ -z "$NAME" ]; then
     exit 1
 fi
 
-MANIFEST="$SCRIPT_DIR/containers/$NAME.yml"
-[ -f "$MANIFEST" ] || { echo "Error: no manifest at $MANIFEST (cp containers/TEMPLATE.yml)"; exit 1; }
+# CONTAINERS_PATH (resolved in common.sh) is where manifests live: the repo's
+# containers/ by default, or $BASE_PATH/containers / a CONTAINERS_PATH override
+# when you keep them in a private repo outside this one.
+MANIFEST="$CONTAINERS_PATH/$NAME.yml"
+[ -f "$MANIFEST" ] || { echo "Error: no manifest at $MANIFEST (cp $SCRIPT_DIR/containers/TEMPLATE.yml $MANIFEST)"; exit 1; }
 command -v yq >/dev/null || { echo "Error: yq required (brew install yq)"; exit 1; }
 # Host python3 (stdlib-only, builds the wiring payload): prefer the SYSTEM
 # interpreter over whatever shim leads $PATH — pyenv/homebrew pythons can be
