@@ -1,42 +1,16 @@
-# plugins/serena/plugin.yml — a baked-in local MCP tool (stdio, runs INSIDE the
-# container). Enable it per container by listing its name in the manifest:
-#
-#   plugins: [serena]
-#
-# up.sh then wires `mcp` into every installed MCP-capable agent — claude
-# (.mcp.json), cursor-agent / gemini / pi (their JSON configs), codex
-# (config.toml managed block); aider has no MCP — and adds
-# `egress` to its firewall allowlist. `install` runs once at IMAGE BUILD (all
-# plugin files are baked so the tool is present offline; only listed plugins
-# are wired into a given container). No host service, no secret — unlike the
-# capabilities:{gateway,proxyman,browser}, which are host-side HTTP services.
-#
-# Serena: semantic code retrieval + editing over LSP (github.com/oraios/serena).
+# serena — local stdio MCP tool, baked into the image. See ./README.md.
 
 install: |
   uv tool install -p 3.13 serena-agent
 
-# Wired into every installed agent's MCP config. stdio server: command +
-# args ONLY (up.sh hard-fails on other fields so all agents wire identically).
-# --project must follow the SESSION, not hardcode /workspace/main: feature work
-# happens in /workspace/worktrees/<branch> (each symlinks main's .mcp.json per
-# the workspace contract), and a hardcoded path would make serena read AND
-# EDIT the wrong checkout from every worktree. Agents launch stdio MCP
-# servers with cwd = the directory they were started in, so "$PWD" roots
-# serena at main when started in main and at the worktree when started there.
-# Caveat of the non-Claude agents' GLOBAL (home-dir) configs: starting one of
-# them outside a project roots serena at that directory — serena can then
-# read/edit whatever tree it was started in, so start agents in a checkout.
+# LOCAL server: command + args ONLY (up.sh hard-fails on other fields, so every
+# agent wires identically). "$PWD" roots serena at the session's checkout —
+# never hardcode a path, or worktrees read/edit the wrong tree (see README).
 mcp:
   serena:
     command: bash
     args: [-c, 'exec serena start-mcp-server --context ide-assistant --project "$PWD"']
 
-# Serena downloads a language server per language on first use (lazy). github.com
-# + npmjs.org + pythonhosted.org are already in the base allowlist, covering the
-# common Python/TS/JS servers; the hosts below cover the Azure-blob-hosted ones
-# (.NET, some others). If a language's server still fails to download, read the
-# firewall's blocked host from the error and add it live with:
-#   ./bin/allow-egress.sh dev-agent-<name> <host> --save yml
+# Azure-blob hosts for serena's lazily-downloaded language servers (see README).
 egress:
   - blob.core.windows.net

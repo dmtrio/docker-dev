@@ -109,78 +109,30 @@ outrun it).
 
 ## Plugins (every MCP server is a file)
 
-A **plugin** is one file — `plugins/<name>.yml` — describing an MCP server a
-container can get. Listing its name in a manifest's `plugins:` wires it in;
-unlisted plugins stay dormant in the shared image. There are two shapes,
-distinguished by the entry itself (no `type:` field):
-
-**Local** — a stdio server that runs INSIDE the container (`command:`). Its
-`install:` runs at image build so the binary is present offline, and it wires
-into *every* installed MCP-capable agent.
+A **plugin** is a directory — `plugins/<name>/` — describing an MCP server (or
+just a secret) a container can get. A manifest opts in by name; unlisted plugins
+stay dormant in the shared image:
 
 ```yaml
-install: |                     # runs at IMAGE BUILD (full network; offline after)
-  uv tool install -p 3.13 serena-agent
-mcp:                           # wired into every installed agent's MCP config
-  serena:                      # ("$PWD" so the server follows worktree sessions)
-    command: bash
-    args: [-c, 'exec serena start-mcp-server --context ide-assistant --project "$PWD"']
-egress:                        # added to this container's firewall allowlist
-  - blob.core.windows.net
+plugins: [serena, gateway, obsidian-annotated]
 ```
 
-**Remote** — an HTTP server running on the Mac host (`url:`, no `install:`,
-nothing baked). `host_port:` folds into the firewall grant; `secrets:` names
-the token slot its headers reference. Wired into Claude's `.mcp.json` (the
-`${VAR}` ref expands from the shim env); the Mac-side service self-generates
-its token into `secrets.env` on first run.
+Two shapes, decided by the entry (no `type:` field):
 
-```yaml
-host_port: 8811                          # firewall grant for host.docker.internal:8811
-secrets:
-  MCP_GATEWAY_TOKEN: {scope: env, hint: "gateway (run ./service.sh gateway once)"}
-mcp:
-  coding:
-    url: http://host.docker.internal:8811/mcp
-    headers: {Authorization: "Bearer ${MCP_GATEWAY_TOKEN}"}
-```
+- **Local** — a stdio server baked into the image (`command:` + `install:`),
+  wired into every installed agent.
+- **Remote** — an HTTP server (`url:`), on the Mac host (`host_port:`, started
+  with `./service.sh <name>`) or a real internet host.
 
-Shipped remote plugins (each needs its host service started once, via
-`./service.sh <name>`):
+A plugin may also be **env-only** — a `secrets:` slot with no server. Slots are
+`env`-scoped (one value shared by all agents) or `agent`-scoped (per-agent,
+bound under the manifest's `agent_secrets:`). `up.sh` derives the wiring and
+folds each plugin's `egress`/`host_port` into the firewall; de-listing one
+removes its wiring on the next up.
 
-| Plugin | Port | Start on the Mac | Token |
-|---|---|---|---|
-| `gateway` | 8811 | `./service.sh gateway` — headless Playwright via Docker MCP gateway | `MCP_GATEWAY_TOKEN` |
-| `proxyman` | 8813 | `./service.sh proxyman` — Proxyman traffic capture | `PROXYMAN_BRIDGE_KEY` |
-| `browser` | 8814 | `./service.sh browser` — watchable desktop Brave/Chrome, isolated profile | `RESEARCH_BROWSER_KEY` |
-
-Two independent axes, deliberately split:
-
-- **Baked (build, image-wide):** every *local* plugin's `install:` runs at
-  image build, so all plugin binaries live in the shared image and work offline
-  behind the runtime firewall (remote plugins bake nothing). Adding a plugin =
-  dropping a file + a rebuild — no `Dockerfile` or `up.sh` edits.
-- **Wired (up, per container):** a manifest opts in with `plugins: [serena]`;
-  `src/manifest.py` validates the plugin file and derives the wiring, and
-  `up.sh` hands it to `src/wire_plugins.py` (baked into the image; one
-  `docker exec` with a JSON payload). Local servers merge into every installed
-  MCP-capable agent — claude's `.mcp.json` (pre-approved by construction),
-  cursor-agent's / gemini's / pi's JSON configs, and a managed
-  `[mcp_servers.*]` block in codex's `config.toml` (aider has no MCP support;
-  pi's config is inert until the pi-mcp-adapter extension is installed).
-  Env-scoped remote servers wire into claude's `.mcp.json` only; **agent-scoped**
-  remote servers (obsidian) wire per bound agent — a `${VAR}` ref for claude,
-  the literal key for cursor/gemini/pi, a warning for codex. Plugins fold their
-  `egress`/`host_port` into the firewall. De-listing a plugin removes its
-  wiring on the next up. One asymmetry: if the workspace repo
-  ships its own `.mcp.json`, claude keeps that file untouched (no plugin
-  entries) while the other agents' home-dir configs are still wired.
-
-First plugin: **serena** (`github.com/oraios/serena`) — semantic code
-retrieval + editing over LSP. It lazily downloads a language server per
-language on first use; github/npm/pythonhosted are already allowlisted
-(Python/TS/JS) and the plugin adds the Azure-blob hosts. If some other
-language's download is blocked, add the host live with `bin/allow-egress.sh`.
+**→ [`plugins/README.md`](plugins/README.md)** — the schema, how wiring works,
+and how to add a plugin. Each **`plugins/<name>/README.md`** documents that
+plugin.
 
 ## Identity model
 
@@ -226,12 +178,9 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
   `up.sh` / `down.sh` are container lifecycle from manifests; `service.sh <name>`
   starts a plugin's Mac-side host service (see `plugins/`)
 - `containers/` — manifests (`TEMPLATE.yml` to copy; your own are gitignored)
-- `plugins/` — drop-in MCP tools, one directory each: `<name>/plugin.yml`
-  (install / mcp / egress / secrets) plus an optional host-only `<name>/run.sh`
-  for plugins backed by a Mac-side service (gateway / proxyman / browser).
-  `plugin.yml`s are baked at image build and wired per container via the
-  manifest's `plugins:` list; `run.sh`s are started with `./service.sh <name>`
-  and excluded from the image via `.dockerignore`
+- `plugins/` — drop-in MCP tools, one directory each (`<name>/plugin.yml` +
+  optional host-only `<name>/run.sh`, started via `./service.sh <name>`). See
+  [`plugins/README.md`](plugins/README.md) for the schema and how to add one
 - `rules/` — bundled default agent rules & skills (override via `RULES_PATH`)
 - `bin/` — host commands you run occasionally (`up.sh` / `down.sh` / `service.sh`
   are the daily ones and stay at the root):

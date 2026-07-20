@@ -1,18 +1,7 @@
-# plugins/proxyman/plugin.yml — a REMOTE MCP server (HTTP) reached on the docker
-# host (plugins/proxyman/run.sh, started via `./service.sh proxyman` — Proxyman
-# traffic capture). No `install:` block:
-# nothing is baked, only `url:` config. Enable per container with:
-#
-#   plugins: [proxyman]
-#
-# up.sh grants firewall access to host_port and wires `mcp` into Claude's
-# .mcp.json. The bridge key is container-wide (env-scoped): every agent
-# presents the same value, delivered via each shim's <agent>.env.
-#
-# Migrated from the old `capabilities: {proxyman: true}` flag (PLN - Plugins
-# v2, Phase 1); `capabilities:` still works as deprecated sugar for one release.
+# proxyman — Proxyman traffic-capture bridge. Remote HTTP host service on 8813.
+# See ./README.md. Config only; nothing baked.
 
-host_port: 8813                        # folds into HOST_MCP_PORTS (firewall grant)
+host_port: 8813                        # firewall grant → HOST_MCP_PORTS
 
 secrets:
   PROXYMAN_BRIDGE_KEY: {scope: env, hint: "proxyman (run ./service.sh proxyman once)"}
