@@ -83,6 +83,13 @@ assert_rc "broken ./.env aborts with exit 1" 1 "$rc"
 assert_contains "broken ./.env reports the failure" "$out" "./.env exited non-zero"
 rm -f "$cfg/.env"
 
+# CONTAINERS_PATH resolution (mirrors RULES_PATH: override → $BASE_PATH/containers → repo)
+cpath() { env -i DEV_AGENT_HOME="${1-}" CONTAINERS_PATH="${2-}" bash -c '. "$1"; echo "$CONTAINERS_PATH"' _ "$cfg/common.sh"; }
+assert_eq "default CONTAINERS_PATH is the repo's containers/" "$cfg/containers" "$(cpath '' '')"
+dah="$WORK/dah-cp"; mkdir -p "$dah/containers"
+assert_eq "\$BASE_PATH/containers wins when it exists" "$dah/containers" "$(cpath "$dah" '')"
+assert_eq "CONTAINERS_PATH env override wins over everything" "/my/private/manifests" "$(cpath "$dah" /my/private/manifests)"
+
 # ────────────────────────────────────────────────────────────────────────────
 echo "── allow-egress.sh ──"
 run_ae() { ( cd "$REPO" && PATH="$WORK/aebin:$PATH" bash allow-egress.sh "$@" ) 2>&1; }

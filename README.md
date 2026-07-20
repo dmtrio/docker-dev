@@ -51,10 +51,20 @@ bundled `rules/`. To point at your own locations instead, drop a gitignored
 ```bash
 DEV_AGENT_HOME="$HOME/dev-agent"           # move the runtime home (secrets/keys/artifacts)
 RULES_PATH="$HOME/git/agent-conf/rules"    # use your own rules repo instead of bundled rules/
+CONTAINERS_PATH="$HOME/dev-agent/containers"  # read manifests from your own (private) dir
 ```
 
 (When `DEV_AGENT_HOME` is set and `$DEV_AGENT_HOME/rules` exists, it's used as
-the rules dir automatically — no need to set `RULES_PATH` too.)
+the rules dir automatically — no need to set `RULES_PATH` too. The same applies
+to manifests: if `$DEV_AGENT_HOME/containers` exists it's used automatically, so
+you don't need to set `CONTAINERS_PATH` either.)
+
+**Keep your manifests out of this repo.** Your real `containers/*.yml` carry
+semi-private data (private repo URLs, LAN subnets, identity naming), so this
+repo ships only `containers/TEMPLATE.yml`. Point manifests at a directory of
+your own — e.g. `~/dev-agent/containers` (auto-detected) — and make *that* its
+own private git repo. The tool stays public; your configs stay private and
+versioned, with no second copy of the project to maintain.
 
 ## Quick start
 

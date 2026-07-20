@@ -52,7 +52,10 @@ case "${SAVE:-}" in yml|firewall|none|"") ;; *) echo "Error: --save must be yml,
 # name (dev-agent-coding-personal-site); normalise to both.
 SHORT="${RAW#dev-agent-}"
 CONTAINER="dev-agent-$SHORT"
-MANIFEST="$SCRIPT_DIR/containers/$SHORT.yml"
+# Sourced here (not at the top) so --help / usage / bad-flag paths don't depend
+# on ./.env; only the manifest path below needs CONTAINERS_PATH.
+. "$SCRIPT_DIR/common.sh"   # sets CONTAINERS_PATH (where manifests live)
+MANIFEST="$CONTAINERS_PATH/$SHORT.yml"
 
 command -v docker >/dev/null || { echo "Error: docker not found"; exit 1; }
 
@@ -168,7 +171,7 @@ save_firewall() {
 
 if [ -z "$SAVE" ]; then
     echo "Persist permanently? (the live change above is lost when the container is recreated)"
-    echo "  [y] manifest  containers/$SHORT.yml   → this container, next ./up.sh"
+    echo "  [y] manifest  $MANIFEST   → this container, next ./up.sh"
     echo "  [f] firewall  init-firewall.sh        → ALL containers, next build"
     echo "  [s] skip                              → live only"
     printf "Choice [y/f/s]: "
