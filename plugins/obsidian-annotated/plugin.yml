@@ -1,26 +1,6 @@
-# plugins/obsidian-annotated/plugin.yml — a REMOTE MCP server (HTTP) with an
-# AGENT-SCOPED secret: each agent presents its OWN key, and the server is wired
-# only for agents the manifest binds. This is the Annotated Obsidian endpoint
-# (mcp-obsidian.dmetr.io) — a real internet host, reached via the egress
-# allowlist (not host.docker.internal), so there is no host_port.
-#
-# Enable + bind per container:
-#
-#   plugins: [obsidian-annotated]
-#   agent_secrets:
-#     - {agent: claude,       slot: OBSIDIAN_ANNOTATED_KEY, secret: OBSIDIAN_KEY_me_claude}
-#     - {agent: cursor-agent, slot: OBSIDIAN_ANNOTATED_KEY, secret: OBSIDIAN_KEY_bot_cursor_agent}
-#
-# up.sh delivers each bound agent's key into its own <agent>.env (shim env) and
-# wires the server per agent: claude's .mcp.json keeps the ${VAR} ref (the shim
-# expands it); cursor-agent/gemini/pi get the literal key baked into their
-# config (they can't expand env refs in remote headers); codex gets a warning
-# (its remote-MCP config format is still pending) but the key is available to
-# codex processes via its shim.
-#
-# Migrated from the old `identities: {obsidian: [...]}` manifest key (PLN -
-# Plugins v2, Phase 2); `identities:` still works as deprecated sugar for one
-# release.
+# obsidian-annotated — remote MCP at mcp-obsidian.dmetr.io (a real internet host,
+# reached via egress, so no host_port). Agent-scoped secret: each agent presents
+# its own key and the server is wired only for bound agents. See ./README.md.
 
 secrets:
   OBSIDIAN_ANNOTATED_KEY: agent          # per-agent: each agent wears its own key

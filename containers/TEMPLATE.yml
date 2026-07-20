@@ -60,31 +60,19 @@ capabilities:
 #  they are plugins now. `capabilities: {gateway: true}` still works for one
 #  release but prints a warning; prefer `plugins: [gateway]` below.)
 
-# Plugins — every MCP server a container can get is a plugins/<name>.yml file.
-# Listing a name here wires it into this container; unlisted plugins stay
-# dormant in the shared image.
-#
-# LOCAL plugins run stdio INSIDE the container (a binary baked at image build,
-# no host service, no secret) and wire into EVERY installed MCP-capable agent —
-# claude's .mcp.json (auto-approved), cursor's/gemini's/pi's JSON configs,
-# codex's config.toml (aider has no MCP; pi's is inert until the
-# pi-mcp-adapter extension is installed) — plus their egress into the firewall.
-#
-# REMOTE plugins are HTTP MCP servers running on the Mac host: up.sh grants the
-# firewall the host port and wires the server into Claude's .mcp.json, with the
-# service token delivered from secrets.env. Each needs its Mac-side service
-# started once (self-generates the token):
-#   gateway  → 8811, MCP_GATEWAY_TOKEN     (./service.sh gateway  — headless Playwright)
-#   proxyman → 8813, PROXYMAN_BRIDGE_KEY   (./service.sh proxyman — traffic capture)
-#   browser  → 8814, RESEARCH_BROWSER_KEY  (./service.sh browser  — watchable desktop browser)
+# Plugins — every MCP server a container can get is a plugins/<name>/ directory.
+# Listing a name here wires it into this container; unlisted plugins stay dormant
+# in the shared image. LOCAL plugins run stdio inside the container (baked, wired
+# into every agent); REMOTE plugins are HTTP servers, some backed by a Mac-side
+# service you start once with ./service.sh <name>. See plugins/README.md for the
+# schema, and each plugins/<name>/README.md for what a plugin does + its token.
 #
 #   plugins: [serena, gateway, obsidian-annotated]   # serena: local; others remote
 plugins: []
 
 # Env-scoped plugin secrets. An ENV-SCOPED slot (its secrets: scope is `env`) is
-# one value shared by every agent — the remote service tokens above (gateway's
-# MCP_GATEWAY_TOKEN, proxyman's PROXYMAN_BRIDGE_KEY, browser's
-# RESEARCH_BROWSER_KEY). Enabling the plugin is enough to wire it: each slot
+# one value shared by every agent (a remote service token). Enabling the plugin
+# is enough to wire it: each slot
 # defaults to a same-named var in secrets.env. Name it here to make the binding
 # explicit AND to re-point THIS container's slot at a different secret.
 #   common_secrets:
@@ -105,13 +93,8 @@ common_secrets: {}
 # `agent`) is wired only for the agents you bind here, each presenting its OWN
 # key. A binding is a flat record: which agent, which slot the plugin declares,
 # and which secrets.env var supplies that agent's value.
-#   - obsidian-annotated declares slot OBSIDIAN_ANNOTATED_KEY (a remote server);
-#     it also allowlists the Annotated endpoint when enabled.
-#   - annotated-watch declares slot ANNOTATED_WATCH_KEY (env-only; no server —
-#     just delivers the watch-vault poll key into that agent's shim env).
 # up.sh HARD-FAILS at apply time if a source var is missing from secrets.env or
-# the agent/slot is unknown. Sources are currently OBSIDIAN_KEY_* /
-# OBSIDIAN_WATCH_KEY_* names (the vars up.sh scans from secrets.env).
+# the agent/slot is unknown. See each plugins/<name>/README.md for its slot name.
 #
 # Example:
 #   plugins: [obsidian-annotated, annotated-watch]
@@ -119,10 +102,7 @@ common_secrets: {}
 #     - {agent: claude, slot: OBSIDIAN_ANNOTATED_KEY, secret: OBSIDIAN_KEY_site_claude}
 #     - {agent: gemini, slot: OBSIDIAN_ANNOTATED_KEY, secret: OBSIDIAN_KEY_site_gemini}
 #     - {agent: claude, slot: ANNOTATED_WATCH_KEY,    secret: OBSIDIAN_WATCH_KEY_site_claude}
-# reads from secrets.env (default ./.dev-agent/secrets.env; see secrets.env.example):
-#   OBSIDIAN_KEY_site_claude=ann_additive_…        → claude's obsidian identity
-#   OBSIDIAN_KEY_site_gemini=ann_additive_…        → gemini's obsidian identity
-#   OBSIDIAN_WATCH_KEY_site_claude=ann_poll_…      → claude's watch key
+# (the secret: values are var names in secrets.env; see secrets.env.example)
 #
 # (The old `identities: {obsidian: [...], watch: [...]}` ref-suffix form still
 #  works for one release but prints a deprecation warning — prefer agent_secrets.)
