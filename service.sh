@@ -44,6 +44,14 @@ if [ -z "$NAME" ]; then
     list_services
     exit 1
 fi
+# Same charset as manifest.py's plugin-name rule (letters, digits, _, -). The
+# name is interpolated into a filesystem path below, so reject anything with a
+# slash or '..' before it can escape plugins/.
+case "$NAME" in
+    *[!A-Za-z0-9_-]*)
+        echo "Error: invalid plugin name '$NAME' (allowed: letters, digits, underscore, dash)."
+        exit 1 ;;
+esac
 shift
 
 if [ ! -d "$PLUGINS_DIR/$NAME" ]; then

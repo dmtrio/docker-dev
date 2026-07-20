@@ -224,6 +224,10 @@ out=$(svc nonesuch 2>&1); rc=$?
 assert_rc "unknown plugin exits non-zero" 1 "$rc"
 assert_contains "unknown plugin names the missing dir" "$out" "no plugin named 'nonesuch'"
 
+out=$(svc ../withsvc 2>&1); rc=$?
+assert_rc "path-traversal name rejected before any fs lookup" 1 "$rc"
+assert_contains "traversal name reported as invalid" "$out" "invalid plugin name"
+
 out=$(svc nosvc 2>&1); rc=$?
 assert_rc "plugin without run.sh exits non-zero" 1 "$rc"
 assert_contains "plugin without run.sh explains why" "$out" "has no host service"
