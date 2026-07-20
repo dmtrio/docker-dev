@@ -17,12 +17,16 @@
 # This is DELIBERATELY separate from ./up.sh: up.sh recreates a container
 # (docker compose up --build), which would kill a running agent — starting a
 # host service must never carry that risk, nor sit one typo away from it.
-# service.sh never touches docker. It also does NOT source src/common.sh: it
-# needs nothing from the dev-agent home, and keeping ./.env off the usage/list
-# and error paths mirrors bin/allow-egress.sh. Each run.sh sources common.sh
-# itself when it actually needs BASE_PATH.
+# service.sh never touches docker.
+#
+# service.sh is the one place that knows the dev-agent home: it sources
+# src/common.sh (once, at the repo root — no ../ path arithmetic) to resolve
+# BASE_PATH and hands it to the launcher in the environment, so each run.sh
+# needs zero path knowledge of its own. common.sh is sourced LATE (just before
+# exec), so the usage/list/error paths above it never depend on ./.env —
+# mirroring bin/allow-egress.sh.
 
-set -euo pipefail
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PLUGINS_DIR="$SCRIPT_DIR/plugins"
@@ -69,4 +73,8 @@ if [ ! -f "$RUN" ]; then
     exit 1
 fi
 
+# Resolve the dev-agent home here and hand it down — the launcher takes it from
+# the environment rather than computing a path to common.sh itself.
+. "$SCRIPT_DIR/src/common.sh"   # sets BASE_PATH
+export BASE_PATH
 exec bash "$RUN" "$@"

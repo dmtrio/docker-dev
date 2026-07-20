@@ -35,10 +35,12 @@ WORK=$(cd "$(mktemp -d)" && pwd -P); trap 'rm -rf "$WORK"' EXIT
 # to the user's REAL keys/secrets. Running them from here can't.
 SBOX="$WORK/repo"; mkdir -p "$SBOX/bin" "$SBOX/src" "$SBOX/plugins/gateway"
 cp "$REPO"/bin/*.sh "$SBOX/bin/"; cp "$REPO"/src/common.sh "$SBOX/src/"
-# The host launchers now live inside their plugin directory (plugins/<name>/
-# run.sh) and source ../../src/common.sh — mirror that layout so the relative
-# source resolves to $SBOX/src/common.sh. gateway is the representative one
-# (see the run-*.sh note below).
+# The launcher test drives gateway THROUGH service.sh (the only supported entry
+# point): service.sh sources src/common.sh, resolves BASE_PATH, and hands it to
+# plugins/<name>/run.sh in the env. Mirror that layout — service.sh at the root,
+# common.sh under src/, the launcher under plugins/gateway/. gateway is the
+# representative launcher (see the run.sh note below).
+cp "$REPO/service.sh" "$SBOX/service.sh"
 cp "$REPO"/plugins/gateway/run.sh "$SBOX/plugins/gateway/"
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -182,17 +184,24 @@ MOCK
 chmod +x "$WORK/rbin/openssl" "$WORK/rbin/docker"
 
 RDAH="$WORK/rdah"; mkdir -p "$RDAH"; SEC="$RDAH/secrets.env"
-run_svc() { ( cd "$SBOX" && env DEV_AGENT_HOME="$RDAH" DOCKER_LOG="$WORK/dockerlog" PATH="$WORK/rbin:$PATH" bash "$1" ) ; }
+# Drive the launcher through service.sh (the entry point): service.sh resolves
+# BASE_PATH from DEV_AGENT_HOME via common.sh and exports it for run.sh.
+run_svc() { ( cd "$SBOX" && env DEV_AGENT_HOME="$RDAH" DOCKER_LOG="$WORK/dockerlog" PATH="$WORK/rbin:$PATH" bash service.sh "$1" ) ; }
 
 : > "$WORK/dockerlog"
-run_svc plugins/gateway/run.sh >/dev/null 2>&1 || true
+run_svc gateway >/dev/null 2>&1 || true
 assert_contains "gateway self-generates its token into secrets.env" "$(cat "$SEC")" "MCP_GATEWAY_TOKEN=DETERMINISTICTOKEN"
 assert_contains "gateway launches docker with the token in env" "$(cat "$WORK/dockerlog")" "AUTH=DETERMINISTICTOKEN"
 assert_contains "gateway runs the coding profile on 8811" "$(cat "$WORK/dockerlog")" "gateway run --profile coding --transport streaming --port 8811"
 
+# service.sh resolves + exports BASE_PATH so run.sh needs no path of its own
+assert_contains "launcher requires BASE_PATH from service.sh" \
+    "$(cd "$SBOX" && bash plugins/gateway/run.sh 2>&1 || true)" \
+    "run this launcher via ./service.sh gateway"
+
 # idempotent: a preset token is not regenerated
 printf 'MCP_GATEWAY_TOKEN=PRESET\n' > "$SEC"; : > "$WORK/dockerlog"
-run_svc plugins/gateway/run.sh >/dev/null 2>&1 || true
+run_svc gateway >/dev/null 2>&1 || true
 assert_eq "preset token kept (one line, unchanged)" "MCP_GATEWAY_TOKEN=PRESET" "$(cat "$SEC")"
 assert_contains "preset token passed to docker" "$(cat "$WORK/dockerlog")" "AUTH=PRESET"
 # plugins/proxyman/run.sh and plugins/browser/run.sh share this exact
@@ -202,14 +211,15 @@ assert_contains "preset token passed to docker" "$(cat "$WORK/dockerlog")" "AUTH
 
 # ────────────────────────────────────────────────────────────────────────────
 echo "── service.sh (host-service dispatcher) ──"
-# A throwaway repo layout: service.sh + a plugin that ships a run.sh (echoes
-# its forwarded args) and one that doesn't. service.sh sources nothing from
-# the dev-agent home, so it runs straight from here with no env setup.
-SVC="$WORK/svc"; mkdir -p "$SVC/plugins/withsvc" "$SVC/plugins/nosvc"
-cp "$REPO/service.sh" "$SVC/service.sh"
+# A throwaway repo layout: service.sh + src/common.sh (service.sh sources it to
+# resolve BASE_PATH just before exec) + a plugin that ships a run.sh (echoes its
+# forwarded args) and one that doesn't. No ./.env, so the validation/error paths
+# never touch it and the exec path resolves BASE_PATH to $SVC/.dev-agent.
+SVC="$WORK/svc"; mkdir -p "$SVC/src" "$SVC/plugins/withsvc" "$SVC/plugins/nosvc"
+cp "$REPO/service.sh" "$SVC/service.sh"; cp "$REPO/src/common.sh" "$SVC/src/"
 cat > "$SVC/plugins/withsvc/run.sh" <<'MOCK'
 #!/bin/bash
-echo "ran withsvc args=[$*]"
+echo "ran withsvc args=[$*] base=${BASE_PATH:+set}"
 MOCK
 chmod +x "$SVC/plugins/withsvc/run.sh"
 : > "$SVC/plugins/nosvc/plugin.yml"
@@ -235,6 +245,7 @@ assert_contains "plugin without run.sh explains why" "$out" "has no host service
 out=$(svc withsvc chrome --flag 2>&1); rc=$?
 assert_rc "valid service execs run.sh (rc 0)" 0 "$rc"
 assert_contains "dispatcher forwards extra args verbatim" "$out" "ran withsvc args=[chrome --flag]"
+assert_contains "dispatcher exports BASE_PATH to the launcher" "$out" "base=set"
 
 echo ""
 if [ "$FAILURES" -gt 0 ]; then echo "FAILED: $FAILURES bash test(s)"; exit 1; fi

@@ -21,7 +21,11 @@ PROXYMAN_MCP="/Applications/Setapp/Proxyman.app/Contents/MacOS/mcp-server"
 [ -x "$PROXYMAN_MCP" ] || PROXYMAN_MCP="/Applications/Proxyman.app/Contents/MacOS/mcp-server"
 [ -x "$PROXYMAN_MCP" ] || { echo "ERROR: Proxyman mcp-server binary not found"; exit 1; }
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../src/common.sh"   # sets BASE_PATH (plugins/<name>/ → repo root)
+# BASE_PATH (the dev-agent home) is resolved by service.sh — which sources
+# src/common.sh once, at the repo root — and handed to this launcher in the
+# environment. So this script needs no path arithmetic of its own; start it via:
+#   ./service.sh proxyman
+: "${BASE_PATH:?run this launcher via ./service.sh proxyman (it resolves BASE_PATH)}"
 SECRETS_FILE="$BASE_PATH/secrets.env"
 [ -f "$SECRETS_FILE" ] || { mkdir -p "$(dirname "$SECRETS_FILE")"; touch "$SECRETS_FILE"; chmod 600 "$SECRETS_FILE"; }
 . "$SECRETS_FILE"

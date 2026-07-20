@@ -22,7 +22,11 @@
 
 set -e
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../src/common.sh"   # sets BASE_PATH (plugins/<name>/ → repo root)
+# BASE_PATH (the dev-agent home) is resolved by service.sh — which sources
+# src/common.sh once, at the repo root — and handed to this launcher in the
+# environment. So this script needs no path arithmetic of its own; start it via:
+#   ./service.sh gateway
+: "${BASE_PATH:?run this launcher via ./service.sh gateway (it resolves BASE_PATH)}"
 SECRETS_FILE="$BASE_PATH/secrets.env"
 [ -f "$SECRETS_FILE" ] || { mkdir -p "$(dirname "$SECRETS_FILE")"; touch "$SECRETS_FILE"; chmod 600 "$SECRETS_FILE"; }
 . "$SECRETS_FILE"

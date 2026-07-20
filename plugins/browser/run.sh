@@ -27,7 +27,11 @@ case "${1:-auto}" in
 esac
 [ -d "$APP" ] || { echo "ERROR: browser not found at $APP"; exit 1; }
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../src/common.sh"   # sets BASE_PATH (plugins/<name>/ → repo root)
+# BASE_PATH (the dev-agent home) is resolved by service.sh — which sources
+# src/common.sh once, at the repo root — and handed to this launcher in the
+# environment. So this script needs no path arithmetic of its own; start it via:
+#   ./service.sh browser
+: "${BASE_PATH:?run this launcher via ./service.sh browser (it resolves BASE_PATH)}"
 PROFILE_DIR="$BASE_PATH/research-browser"
 CDP_PORT=9222
 BRIDGE_PORT=8814
