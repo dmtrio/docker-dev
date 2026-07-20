@@ -1,18 +1,7 @@
-# plugins/browser/plugin.yml — a REMOTE MCP server (HTTP) reached on the docker
-# host (plugins/browser/run.sh, started via `./service.sh browser` — a watchable
-# desktop browser the agent drives). No
-# `install:` block: nothing is baked, only `url:` config. Enable per container:
-#
-#   plugins: [browser]
-#
-# up.sh grants firewall access to host_port and wires `mcp` into Claude's
-# .mcp.json. The key is container-wide (env-scoped): every agent presents the
-# same value, delivered via each shim's <agent>.env.
-#
-# Migrated from the old `capabilities: {browser: true}` flag (PLN - Plugins v2,
-# Phase 1); `capabilities:` still works as deprecated sugar for one release.
+# browser — watchable desktop browser the agent drives. Remote HTTP host service
+# on 8814. See ./README.md. Config only; nothing baked.
 
-host_port: 8814                        # folds into HOST_MCP_PORTS (firewall grant)
+host_port: 8814                        # firewall grant → HOST_MCP_PORTS
 
 secrets:
   RESEARCH_BROWSER_KEY: {scope: env, hint: "browser (run ./service.sh browser once)"}

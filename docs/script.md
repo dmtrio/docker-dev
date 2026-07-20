@@ -23,30 +23,19 @@ so your real manifests can live outside this repo.
 
 ## Before you create a container
 
-Host-side capability services. Start the ones a container's manifest grants
-(`capabilities.gateway/proxyman/browser`) **before** `./up.sh`, and keep them
-running for as long as the container runs — the container reaches them over
-`host.docker.internal`. Each binds localhost only and self-generates its token
-into `secrets.env` on first run. Start them with `./service.sh <name>` — the
-dispatcher execs the plugin's own launcher (`plugins/<name>/run.sh`) so you
-never need the path. Run them in tmux (or wrap in launchd) so they survive.
-
-| `./service.sh …` | Serves | Port | Token (auto-seeded) |
-| --- | --- | --- | --- |
-| `./service.sh gateway` | The `coding` MCP profile (headless Playwright) | 8811 | `MCP_GATEWAY_TOKEN` |
-| `./service.sh proxyman` | Proxyman's stdio MCP over HTTP (Proxyman.app must be open) | 8813 | `PROXYMAN_BRIDGE_KEY` |
-| `./service.sh browser [brave\|chrome]` | A watchable, isolated-profile research browser | 8814 | `RESEARCH_BROWSER_KEY` |
+Some plugins are backed by a service that runs on your Mac (the container
+reaches it over `host.docker.internal`). Start the ones a container's manifest
+lists **before** `./up.sh`, and leave them running (tmux or launchd):
 
 ```bash
-./service.sh gateway         # then leave it running
-./service.sh browser brave   # extra args are forwarded to the launcher (default: Brave, else Chrome)
-./service.sh                 # lists the plugins that ship a host service
+./service.sh <name>   # execs plugins/<name>/run.sh; self-generates its token on first run
+./service.sh          # lists the plugins that ship a host service
 ```
 
-`service.sh` is deliberately separate from `up.sh`: `up.sh` recreates a
-container (and would kill a running agent), while starting a host service must
-never carry that risk — so it's its own root-level command and never touches
-docker.
+`service.sh` is deliberately separate from `up.sh` — `up.sh` recreates the
+container (killing a running agent), so starting a host service is its own
+root-level command that never touches docker. Which plugins need a service, and
+the token each uses, are documented in `plugins/<name>/README.md`.
 
 ## Creating / updating a container
 

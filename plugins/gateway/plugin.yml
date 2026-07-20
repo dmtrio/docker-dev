@@ -1,29 +1,12 @@
-# plugins/gateway/plugin.yml — a REMOTE MCP server (HTTP) the container reaches
-# on the docker host. Unlike a local plugin (serena/plugin.yml), nothing is baked into
-# the image: there is no `install:` block, only `url:` config. Enable it per
-# container by listing its name in the manifest:
-#
-#   plugins: [gateway]
-#
-# The server runs on the HOST (plugins/gateway/run.sh, started via
-# `./service.sh gateway` — a headless Playwright MCP gateway). up.sh grants the
-# container firewall access to host_port and
-# wires the `mcp` entry into Claude's .mcp.json (the ${VAR} header ref expands
-# from the shim env). The token is a container-wide (env-scoped) secret: every
-# agent presents the same value.
-#
-# Migrated from the old `capabilities: {gateway: true}` flag (PLN - Plugins v2,
-# Phase 1); `capabilities:` still works as deprecated sugar for one release.
+# gateway — headless Playwright MCP gateway. Remote HTTP host service on 8811.
+# See ./README.md (what it is, how to start it, security). Config only; nothing baked.
 
-host_port: 8811                        # folds into HOST_MCP_PORTS (firewall grant)
+host_port: 8811                        # firewall grant → HOST_MCP_PORTS
 
-# Secret slots this plugin's headers reference. `env` scope = one value shared
-# by every agent, delivered via each shim's <agent>.env. `hint` is shown verbatim
-# in up.sh's "not in secrets.env" warning when the source var is unset.
+# env scope = one value shared by all agents; hint shows in up.sh's missing-var warning.
 secrets:
   MCP_GATEWAY_TOKEN: {scope: env, hint: "gateway (run ./service.sh gateway once)"}
 
-# Remote server: `url:` (not `command:`) — reached over HTTP at the host port.
 mcp:
   coding:
     url: http://host.docker.internal:8811/mcp
