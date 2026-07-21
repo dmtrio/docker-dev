@@ -129,14 +129,36 @@ _da_services() {
 complete -F _da_services dasvc
 ```
 
-macOS defaults to zsh. The aliases work in `~/.zshrc` unchanged. The completion
-uses bash's `complete`/`compgen`; to reuse the same functions in zsh, load its
-bash-compat shim once **before** the `complete` lines:
+macOS defaults to zsh. The aliases work in `~/.zshrc` unchanged. For completion,
+pick one:
+
+Reuse the bash functions above via zsh's compat shim (place it **before** the
+`complete` lines):
 
 ```zsh
-autoload -Uz compinit bashcompinit
-compinit
-bashcompinit
+autoload -Uz compinit bashcompinit && compinit && bashcompinit
+```
+
+Or use native zsh completion instead — no shim, and `(N)` makes the globs
+no-match-safe. Needs `compinit` to have run (frameworks like oh-my-zsh already
+do it):
+
+```zsh
+_da_names_zsh() {   # container short-names; mirrors common.sh's CONTAINERS_PATH resolution
+  local dir
+  if   [ -n "$CONTAINERS_PATH" ]; then dir="$CONTAINERS_PATH"
+  elif [ -d "${DEV_AGENT_HOME:-$DA_REPO/.dev-agent}/containers" ]; then dir="${DEV_AGENT_HOME:-$DA_REPO/.dev-agent}/containers"
+  else dir="$DA_REPO/containers"; fi
+  local -a names=(${dir}/*.yml(N:t:r)); names=(${names:#TEMPLATE})
+  compadd -a names
+}
+compdef _da_names_zsh daup dadown
+
+_da_services_zsh() {   # plugins that ship a run.sh (:h dir, :t tail = plugin name)
+  local -a names=(${DA_REPO}/plugins/*/run.sh(N:h:t))
+  compadd -a names
+}
+compdef _da_services_zsh dasvc
 ```
 
 ## Firewall egress (`capabilities:`)
