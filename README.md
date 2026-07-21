@@ -130,18 +130,8 @@ complete -F _da_services dasvc
 ```
 
 macOS defaults to zsh. The aliases work in `~/.zshrc` unchanged. For completion,
-pick one:
-
-Reuse the bash functions above via zsh's compat shim (place it **before** the
-`complete` lines):
-
-```zsh
-autoload -Uz compinit bashcompinit && compinit && bashcompinit
-```
-
-Or use native zsh completion instead — no shim, and `(N)` makes the globs
-no-match-safe. Needs `compinit` to have run (frameworks like oh-my-zsh already
-do it):
+use the native zsh version below — `(N)` makes the globs no-match-safe. Needs
+`compinit` to have run (frameworks like oh-my-zsh already do it):
 
 ```zsh
 _da_names_zsh() {   # container short-names; mirrors common.sh's CONTAINERS_PATH resolution
