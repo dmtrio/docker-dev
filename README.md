@@ -129,8 +129,15 @@ _da_services() {
 complete -F _da_services dasvc
 ```
 
-macOS defaults to zsh — the aliases work in `~/.zshrc` unchanged; the
-`complete -F` completion is bash-only (zsh uses `compdef`).
+macOS defaults to zsh. The aliases work in `~/.zshrc` unchanged. The completion
+uses bash's `complete`/`compgen`; to reuse the same functions in zsh, load its
+bash-compat shim once **before** the `complete` lines:
+
+```zsh
+autoload -Uz compinit bashcompinit
+compinit
+bashcompinit
+```
 
 ## Firewall egress (`capabilities:`)
 
