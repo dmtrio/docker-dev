@@ -47,10 +47,10 @@ for var in NTFY_URL NTFY_TOPIC; do
         || fail "ssh overlay is missing $var"
 done
 
-echo "── mosh port-range agreement (up.sh is the source; defaults must align)"
+echo "── mosh port-range agreement (manifest.py is the source; defaults must align)"
 # The overlay carries fallbacks (${MOSH_PORTS:-...} / ${MOSH_PORTS_DASH:-...})
-# for the values up.sh computes from remote.mosh_ports. All defaults — env
-# (colon form), publish (dash form), wrapper, up.sh — must be one range.
+# for the values manifest.py computes from remote.mosh_ports. All defaults — env
+# (colon form), publish (dash form), wrapper, manifest.py — must be one range.
 ENV_DEFAULT=$(yq -r '.services.dev-agent.environment[]' compose/docker-compose.mosh.yml | sed -n 's/^MOSH_PORTS=${MOSH_PORTS:-\(.*\)}$/\1/p')
 [ "$ENV_DEFAULT" = "60000:60010" ] \
     && pass "mosh overlay env default is 60000:60010" \
@@ -62,11 +62,11 @@ DASH_DEFAULT=$(yq -r '.services.dev-agent.ports[0]' compose/docker-compose.mosh.
 grep -qF "\${MOSH_PORTS:-$ENV_DEFAULT}" src/mosh-server-wrapper.sh \
     && pass "mosh-server wrapper default matches the overlay default" \
     || fail "wrapper default range drifted from the overlay"
-grep -qF "MOSH_PORTS:-60000:60010" up.sh \
-    && pass "up.sh default range matches" \
-    || fail "up.sh default range drifted"
+grep -qF '"60000:60010"' src/manifest.py \
+    && pass "manifest.py default range matches the overlay" \
+    || fail "manifest.py default range drifted"
 
-# up.sh's remote.mosh_ports validation must reject malformed/reversed ranges
+# manifest.py's remote.mosh_ports validation (MOSH_PORTS_RE) must reject malformed/reversed ranges
 check_range() { printf '%s' "$1" | grep -qE '^[0-9]{1,5}:[0-9]{1,5}$'; }
 check_range "60000:60010" && pass "range validation accepts 60000:60010" || fail "validation rejects the default range"
 check_range "60000-60010" && fail "range validation accepted dash form" || pass "range validation rejects dash form"
@@ -156,15 +156,15 @@ while IFS=$'\t' read -r file expr; do
         && pass "$file still contains: $expr" \
         || fail "$file no longer contains (update this suite!): $expr"
 done <<'DRIFT'
-up.sh	.remote.tmux // false
-up.sh	.remote.mosh // false
-up.sh	.remote.notify
-up.sh	.remote.mosh_ports
+src/manifest.py	remote.get("tmux")
+src/manifest.py	remote.get("mosh")
+src/manifest.py	remote.get("notify")
+src/manifest.py	remote.get("mosh_ports")
 up.sh	compose/docker-compose.mosh.yml
 up.sh	dev-agent-net
-up.sh	remote.notify requires remote.tmux
-up.sh	s|^[A-Za-z]+://||; s|/.*$||; s|^.*@||; s|:[0-9]+$||
-up.sh	^[0-9]{1,5}:[0-9]{1,5}$
+src/manifest.py	remote.notify requires remote.tmux
+src/manifest.py	re.sub(r"^[A-Za-z]+://", "", ntfy_url)
+src/manifest.py	[0-9]{1,5}:[0-9]{1,5}
 src/init-firewall.sh	^[0-9]+:[0-9]+$
 src/init-firewall.sh	--dport "$MOSH_PORTS"
 src/init-firewall.sh	-s "$HOST_IP"
