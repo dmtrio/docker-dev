@@ -50,7 +50,7 @@ done
 echo "── mosh port-range agreement (manifest.py is the source; defaults must align)"
 # The overlay carries fallbacks (${MOSH_PORTS:-...} / ${MOSH_PORTS_DASH:-...})
 # for the values manifest.py computes from remote.mosh_ports. All defaults — env
-# (colon form), publish (dash form), wrapper, up.sh — must be one range.
+# (colon form), publish (dash form), wrapper, manifest.py — must be one range.
 ENV_DEFAULT=$(yq -r '.services.dev-agent.environment[]' compose/docker-compose.mosh.yml | sed -n 's/^MOSH_PORTS=${MOSH_PORTS:-\(.*\)}$/\1/p')
 [ "$ENV_DEFAULT" = "60000:60010" ] \
     && pass "mosh overlay env default is 60000:60010" \
