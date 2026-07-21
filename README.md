@@ -193,22 +193,31 @@ removes its wiring on the next up.
 and how to add a plugin. Each **`plugins/<name>/README.md`** documents that
 plugin.
 
-## Identity model
+## Secrets model
 
-- **Per agent, not per container**: shims front each CLI and load that agent's
-  own `~/.agent-keys/<agent>.env` at process start — one complete file per agent
-  (env-scoped secrets shared by all + that agent's own agent-scoped keys), so
-  `cat <agent>.env` is the full audit of what the agent sees. Delegation
-  (`cursor-agent -p` from claude) never leaks the invoker's credentials.
-- **Obsidian Annotated**: one scoped key per agent, bound explicitly under the
-  manifest's `agent_secrets:` (an agent-scoped plugin — `obsidian-annotated`
-  for the server, `annotated-watch` for the poll key). Each binding names the
-  agent, the plugin's slot, and the `secrets.env` source var — validated at
-  `up` time, hard-fail on a dangling source. (The old `identities:` ref-suffix
-  form still works for one release with a deprecation warning.)
-- **GitHub**: agents act as the machine user (`GH_TOKEN`); your personal
-  login never enters a container unless you `gh auth login` there yourself.
-  PRs/comments from agents show as the bot; you review and merge as you.
+Secret **values** live in one file — `secrets.env` (mode 600, gitignored, never
+mounted). Manifests and the Python modules handle only secret **names**; values
+are resolved host-side at `up` time. Plugins declare **secret slots**, each
+scoped:
+
+- **env-scoped** — one value shared by every agent (service tokens). Bound with
+  `common_secrets:`; a slot defaults to a same-named `secrets.env` var.
+- **agent-scoped** — each agent gets its own value (e.g. a per-agent Obsidian
+  key). Bound with `agent_secrets:`, one record per (agent, slot, source var);
+  a dangling source hard-fails at `up`.
+
+**Per-agent shims deliver them.** Each agent CLI is fronted by a shim that, at
+process start, loads only that agent's `~/.agent-keys/<agent>.env` — the
+env-scoped secrets plus that agent's own agent-scoped keys — and overrides
+inherited env before exec'ing the real binary. Two consequences:
+
+- `cat <agent>.env` is the full audit of exactly what that agent sees.
+- Delegation is safe: when claude spawns `cursor-agent -p`, the child's shim
+  loads *its* identity — the invoker's credentials never leak.
+
+GitHub rides the same path: agents act as the machine user (`GH_TOKEN`); your
+personal login never enters a container unless you `gh auth login` there, and
+agent PRs/comments show as the bot (you review and merge as you).
 
 ## Rules & skills (shared knowledge, never shared identity)
 
@@ -268,7 +277,7 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
 - `.env` (gitignored) — optional `DEV_AGENT_HOME` / `RULES_PATH` /
   `DEV_AGENT_SUBNET` overrides
 
-## Remote hosts: homelab (Unraid) & VPS
+## Remote hosts (Linux server or VPS)
 
 Same system, same files, one addition. On any Linux box with Docker:
 
@@ -286,7 +295,7 @@ Same system, same files, one addition. On any Linux box with Docker:
    ```
 
 4. `./up.sh <name>` — identical to the Mac. Connect with VS Code
-   **Remote-SSH** to the host/port; everything else (firewall, identities,
+   **Remote-SSH** to the host/port; everything else (firewall, secrets,
    rules, artifacts) behaves exactly the same.
 
 Never expose sshd publicly: keep the bind on loopback (or a tunnel

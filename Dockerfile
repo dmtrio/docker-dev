@@ -212,7 +212,7 @@ COPY src/init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh
 
 # ── SSH server (always installed, runs only when SSH_ENABLED=true) ──────────
-# One image everywhere: Mac attach-mode, homelab, VPS. The manifest's ssh:
+# One image everywhere: Mac attach-mode and any remote Linux host. The manifest's ssh:
 # section turns sshd on at RUNTIME (entrypoint injects SSH_AUTHORIZED_KEY).
 RUN apt-get update && apt-get install -y openssh-server \
     && rm -rf /var/lib/apt/lists/* \

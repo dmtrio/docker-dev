@@ -147,7 +147,7 @@ fi
 echo "nameserver 127.0.0.1" > /etc/resolv.conf
 echo "dnsmasq resolver active ($(grep -c '^ipset=' /etc/dnsmasq.conf) zones mirrored to ipset)"
 
-# Per-container CIDR escape hatch (e.g. LAN subnets for homelab services).
+# Per-container CIDR escape hatch (e.g. LAN subnets for local-network services).
 # hash:net ipsets take CIDRs directly — no DNS involved.
 if [ -n "${ALLOWED_CIDRS:-}" ]; then
     for cidr in $(echo "$ALLOWED_CIDRS" | tr ', ' '\n\n'); do
