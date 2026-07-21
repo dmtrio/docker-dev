@@ -92,6 +92,65 @@ Container"** → `dev-agent-my-app` (lands as `coder` in `/workspace` — open
 auth volumes): `claude` login; `codex` / `gemini` if used. Agents already
 carry the GitHub machine-user token from `secrets.env`.
 
+## Shell aliases (optional)
+
+`up.sh` / `down.sh` / `service.sh` resolve their own location, so they run from
+any directory. Drop these in `~/.bashrc` to invoke them from anywhere (each
+lists its options when run with no argument):
+
+```bash
+export DA_REPO="$HOME/git/docker-dev"        # adjust to your clone
+alias daup="$DA_REPO/up.sh"                   # daup <name>          (no arg → lists manifests)
+alias dadown="$DA_REPO/down.sh"               # dadown <name> [--purge]
+alias dasvc="$DA_REPO/service.sh"             # dasvc <name> [args]  (no arg → lists host services)
+alias daegress="$DA_REPO/bin/allow-egress.sh" # daegress <container> <domain>…
+alias cdda="cd \$DA_REPO"
+```
+
+Tab-completion for container names (`daup`/`dadown`) and host services (`dasvc`):
+
+```bash
+_da_ctr_dir() {   # mirrors common.sh's CONTAINERS_PATH resolution
+  if   [ -n "$CONTAINERS_PATH" ];                                  then echo "$CONTAINERS_PATH"
+  elif [ -d "${DEV_AGENT_HOME:-$DA_REPO/.dev-agent}/containers" ]; then echo "${DEV_AGENT_HOME:-$DA_REPO/.dev-agent}/containers"
+  else echo "$DA_REPO/containers"; fi
+}
+_da_names() {
+  local d f names=""; d="$(_da_ctr_dir)"
+  for f in "$d"/*.yml; do f=${f##*/}; [ "$f" = TEMPLATE.yml ] && continue; names="$names ${f%.yml}"; done
+  COMPREPLY=($(compgen -W "$names" -- "${COMP_WORDS[COMP_CWORD]}"))
+}
+complete -F _da_names daup dadown
+_da_services() {
+  local p names=""
+  for p in "$DA_REPO"/plugins/*/run.sh; do [ -e "$p" ] && names="$names $(basename "$(dirname "$p")")"; done
+  COMPREPLY=($(compgen -W "$names" -- "${COMP_WORDS[COMP_CWORD]}"))
+}
+complete -F _da_services dasvc
+```
+
+macOS defaults to zsh. The aliases work in `~/.zshrc` unchanged. For completion,
+use the native zsh version below — `(N)` makes the globs no-match-safe. Needs
+`compinit` to have run (frameworks like oh-my-zsh already do it):
+
+```zsh
+_da_names_zsh() {   # container short-names; mirrors common.sh's CONTAINERS_PATH resolution
+  local dir
+  if   [ -n "$CONTAINERS_PATH" ]; then dir="$CONTAINERS_PATH"
+  elif [ -d "${DEV_AGENT_HOME:-$DA_REPO/.dev-agent}/containers" ]; then dir="${DEV_AGENT_HOME:-$DA_REPO/.dev-agent}/containers"
+  else dir="$DA_REPO/containers"; fi
+  local -a names=(${dir}/*.yml(N:t:r)); names=(${names:#TEMPLATE})
+  compadd -a names
+}
+compdef _da_names_zsh daup dadown
+
+_da_services_zsh() {   # plugins that ship a run.sh (:h dir, :t tail = plugin name)
+  local -a names=(${DA_REPO}/plugins/*/run.sh(N:h:t))
+  compadd -a names
+}
+compdef _da_services_zsh dasvc
+```
+
 ## Firewall egress (`capabilities:`)
 
 | Manifest key | Effect |
