@@ -188,7 +188,8 @@ RUN echo "PATH=$PATH" | sudo tee /etc/environment >/dev/null
 # Auth/state dirs pre-created as coder so their per-container named volumes
 # initialize with the right ownership on first mount
 RUN mkdir -p /home/$USERNAME/.claude /home/$USERNAME/.codex \
-    /home/$USERNAME/.gemini /home/$USERNAME/.cursor /home/$USERNAME/.config/gh
+    /home/$USERNAME/.gemini /home/$USERNAME/.cursor /home/$USERNAME/.config/gh \
+    /home/$USERNAME/.config/cursor
 
 # ── Workspace ─────────────────────────────────────────────────────────────────
 RUN sudo mkdir -p /workspace && sudo chown $USERNAME:$USERNAME /workspace
