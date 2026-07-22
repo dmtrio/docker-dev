@@ -15,7 +15,23 @@ plugins/<name>/
   plugin.yml     required — what the server is and what it needs
   run.sh         optional — a host-side service, started with ./service.sh <name>
   README.md      optional — human docs for this plugin
+  AGENTS.md      optional — agent-facing usage guidance (when/how to use the
+                 tools). Merged into each agent's global rules, but ONLY in
+                 containers whose manifest enables this plugin.
 ```
+
+### `AGENTS.md` — agent usage guidance
+
+`plugin.yml` wires the server; `AGENTS.md` tells the agent *when and how to use
+it*. It is a heading-scoped markdown fragment (own your `##`/`###`; no top-level
+`#` title). At `up`, `src/compose_rules.py` appends the fragments of the
+**enabled** plugins to each agent's global rules file (base rules from the
+read-only `/agent-rules` mount + fragments → `~/.claude/CLAUDE.md`,
+`~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`); an interactive-shell hook
+recomposes so base edits stay live. No fragment (or the plugin not enabled) ⇒
+nothing merged. This complements a server's own MCP instructions — it also
+covers env-only plugins, servers you don't control, and container-specific
+opinion.
 
 ## Shipped plugins
 
@@ -98,6 +114,9 @@ is a hard error at `up` time.
    declares `secrets:`).
 4. **Local** plugin → rebuild the image so `install:` bakes. **Remote** → just
    rerun `./up.sh <container>`.
-5. Add `plugins/<name>/README.md`.
+5. Add `plugins/<name>/README.md` (human docs) and, if the agent needs guidance
+   on *using* the tools, `plugins/<name>/AGENTS.md` (merged into enabled
+   containers' rules — see above). The fragment is baked with the image, so a
+   change to it needs a rebuild, like `install:`.
 
 No `up.sh` / `Dockerfile` edits — the loader globs the directory.
