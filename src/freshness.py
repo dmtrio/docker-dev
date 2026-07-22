@@ -22,7 +22,6 @@ dim line — or nothing, when no stamp is present (a readout, never an alarm):
 
 No network, no side effects; the relative age uses the container's own clock.
 """
-from __future__ import annotations
 
 import os
 import sys
