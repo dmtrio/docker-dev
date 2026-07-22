@@ -346,6 +346,26 @@ PAYLOAD=$(WIRE_CURSOR="$INSTALL_CURSOR" WIRE_GEMINI="$INSTALL_GEMINI" \
 printf '%s' "$PAYLOAD" | docker exec -i -u coder "${IDENTITY_ENV[@]}" "dev-agent-$NAME" \
     python3 /usr/local/lib/dev-agent/wire_plugins.py
 
+# ── Container freshness stamps (PLN - Container Freshness Readout) ────────────
+# Two host-truth timestamps the landing readout prints, so the human sees how
+# old this container's config is and decides when to re-`up`. Written into
+# /etc/environment (root-owned) AFTER the build/boot, because the image-built
+# value only exists once the image is built. freshness.py reads them there for
+# both attach (`docker exec`, no PAM) and SSH shells.
+#   last `up`    now, every run — external rules (pulled each `up`) + MCP wiring
+#   image built  the image's real .Created via the container's image ID; a full
+#                cache hit leaves it old, which is the honest signal for the
+#                baked half (bundled rules, plugin fragments, install: blocks).
+UP_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+IMAGE_ID="$(docker inspect -f '{{.Image}}' "dev-agent-$NAME" 2>/dev/null || true)"
+IMAGE_BUILT="$(docker inspect -f '{{.Created}}' "$IMAGE_ID" 2>/dev/null || true)"
+# Non-fatal (|| true): the readout is cosmetic — a failure to stamp must never
+# abort an otherwise-successful `up` (zero runtime failure surface, by design).
+docker exec "dev-agent-$NAME" bash -c '
+    sed -i "/^DEV_AGENT_UP_AT=/d;/^DEV_AGENT_IMAGE_BUILT=/d" /etc/environment
+    printf "DEV_AGENT_UP_AT=%s\nDEV_AGENT_IMAGE_BUILT=%s\n" "$1" "$2" >> /etc/environment
+' _ "$UP_AT" "$IMAGE_BUILT" || true
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  dev-agent-$NAME is up (manifest: $MANIFEST)"

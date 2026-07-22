@@ -279,6 +279,20 @@ RUN echo '' >> /home/$USERNAME/.bashrc \
     && echo '# Recompose agent rules (base + enabled-plugin fragments) on interactive shells' >> /home/$USERNAME/.bashrc \
     && echo '. /usr/local/share/rules-compose.bashrc' >> /home/$USERNAME/.bashrc
 
+# ── Container freshness readout (PLN - Container Freshness Readout) ───────────
+# A passive, no-network, one-line readout of how old this container's config is
+# (last `up` + image build date), printed to interactive shells so the human
+# decides when to re-`up`. Stamps are written into /etc/environment by up.sh
+# after boot; freshness.py (stdlib-only, unit-tested) formats the relative age.
+# Sourced BEFORE tmux-landing so that hook stays the last line of .bashrc, and
+# so it prints once — in the tmux pane, not the outer shell tmux replaces.
+COPY src/freshness.py /usr/local/lib/dev-agent/freshness.py
+RUN chmod 644 /usr/local/lib/dev-agent/freshness.py
+COPY --chown=$USERNAME:$USERNAME src/freshness-landing.bashrc /usr/local/share/freshness-landing.bashrc
+RUN echo '' >> /home/$USERNAME/.bashrc \
+    && echo '# PLN Container Freshness: one-line dim config-age readout (interactive)' >> /home/$USERNAME/.bashrc \
+    && echo '. /usr/local/share/freshness-landing.bashrc' >> /home/$USERNAME/.bashrc
+
 # Land interactive SSH/mosh logins in the shared tmux session. The logic
 # lives in a sourced file (lintable, readable); the hook must be the LAST
 # line of .bashrc so fnm/shim PATH setup has already run when tmux execs.
