@@ -1,0 +1,36 @@
+# archex — local stdio MCP tool, baked into the image. See ./README.md.
+#
+# Verified code-context retrieval (BM25F ranking, graph expansion, token-budgeted
+# bundles + proof-bar receipts). Local-first and deterministic: no API key, no
+# hosted inference, no secret, no host service.
+
+# vector-fast pulls FastEmbed/ONNX (not torch) so the OPTIONAL vector path works
+# without an image rebuild; the default BM25 retrieval needs neither. Drop to a
+# plain "archex" to keep the image lean (vectors would then need a reinstall).
+install: |
+  uv tool install -p 3.13 "archex[vector-fast]"
+
+# LOCAL server: command + args ONLY (up.sh hard-fails on other fields, so every
+# agent wires identically). "$PWD" roots archex at the session's checkout — never
+# hardcode a path, or worktrees index/query the wrong tree (see README, mirrors
+# the serena lesson). The repo-local .archex/ index is built lazily on first
+# start; init/index output goes to stderr so stdout stays clean JSON-RPC, and
+# --watch keeps the index warm for the rest of the session.
+#
+# Self-healing guard: gate on a completion sentinel we write ONLY after
+# `archex index` succeeds — not on the .archex/ dir existing. A failed/interrupted
+# first index leaves the dir but no sentinel, so the next start rebuilds instead
+# of silently serving a partial index. `init` errors are swallowed (harmless when
+# already initialized); the sentinel lives inside .archex/, so `rm -rf .archex`
+# forces a clean rebuild.
+mcp:
+  archex:
+    command: bash
+    args: [-c, 'if [ ! -f "$PWD/.archex/.plugin-index-complete" ]; then archex init 1>&2 || true; archex index 1>&2 && : > "$PWD/.archex/.plugin-index-complete"; fi; exec archex mcp --watch --watch-path "$PWD"']
+
+# huggingface: OPTIONAL vector-embedding model download (BM25 default needs none).
+# blob.core.windows.net: tiktoken encoding files fetched at runtime (token budget).
+egress:
+  - huggingface.co
+  - cdn-lfs.huggingface.co
+  - blob.core.windows.net

@@ -12,6 +12,8 @@ containers/*.yml
 .mcp.json
 # serena plugin's per-project state (LSP cache + agent-written memories)
 .serena/
+# archex plugin's per-project state (SQLite index, optional vectors, graph)
+.archex/
 
 # Python bytecode (tests / wiring module)
 __pycache__/

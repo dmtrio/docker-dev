@@ -22,6 +22,7 @@ plugins/<name>/
 | Plugin | Kind | Host service | Docs |
 |---|---|---|---|
 | [`serena`](serena/) | local (stdio, baked) | — | [README](serena/README.md) |
+| [`archex`](archex/) | local (stdio, baked) | — | [README](archex/README.md) |
 | [`gateway`](gateway/) | remote HTTP | `./service.sh gateway` | [README](gateway/README.md) |
 | [`proxyman`](proxyman/) | remote HTTP | `./service.sh proxyman` | [README](proxyman/README.md) |
 | [`browser`](browser/) | remote HTTP | `./service.sh browser` | [README](browser/README.md) |
