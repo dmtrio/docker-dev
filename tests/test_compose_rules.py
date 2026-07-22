@@ -51,15 +51,17 @@ class ReadEnabledTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.d = Path(self.tmp.name)
 
-    def test_missing_file_is_empty(self):
-        self.assertEqual(compose_rules.read_enabled(self.d / "nope"), [])
+    def test_absent_file_is_none(self):
+        # absent ≠ empty: None signals "unknown", so run() skips instead of
+        # downgrading a good file to base-only.
+        self.assertIsNone(compose_rules.read_enabled(self.d / "nope"))
 
     def test_whitespace_split(self):
         f = self.d / "enabled"
         f.write_text("serena archex  gateway\n")
         self.assertEqual(compose_rules.read_enabled(f), ["serena", "archex", "gateway"])
 
-    def test_empty_file_is_empty(self):
+    def test_empty_file_is_empty_list(self):
         f = self.d / "enabled"
         f.write_text("\n")
         self.assertEqual(compose_rules.read_enabled(f), [])
@@ -171,6 +173,21 @@ class RunTests(unittest.TestCase):
             rc = compose_rules.run(self.base, self.plugins, self.enabled, [self.t1])
         self.assertEqual(rc, 1)
         self.assertEqual(self.t1.read_text(), "OLD\n")
+
+    def test_absent_enabled_file_leaves_good_file(self):
+        # The vanished-enabled-file case: a shell hook must NOT strip the plugin
+        # section from a previously-good composed file. enabled-file absent →
+        # skip, preserving whatever the last (up-time) compose wrote.
+        (self.plugins / "serena").mkdir()
+        (self.plugins / "serena" / "AGENTS.md").write_text("## Serena\nactivate first\n")
+        self.t1.parent.mkdir(parents=True, exist_ok=True)
+        good = "BASE RULES\n\n# Plugin tools enabled in this container\n\n## Serena\nactivate first\n"
+        self.t1.write_text(good)
+        self.assertFalse(self.enabled.exists())  # never written
+        with redirect_stdout(io.StringIO()):
+            rc = compose_rules.run(self.base, self.plugins, self.enabled, [self.t1])
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.t1.read_text(), good)
 
     def test_announce_lists_fragments(self):
         (self.plugins / "serena").mkdir()

@@ -70,12 +70,17 @@ def _write_atomic(path, text):
 
 
 def read_enabled(enabled_file):
-    """The enabled-plugin names, whitespace-split. Missing/empty file → [] (a
-    container with no plugins, or before up.sh has written it): the compose then
-    emits the base verbatim, which is the correct, safe fallback."""
+    """The enabled-plugin names, whitespace-split, or None if the file is ABSENT.
+
+    Absent ≠ empty. up.sh always writes this file (empty when a container has no
+    plugins), so an EMPTY file authoritatively means "no plugins" → base-only,
+    whereas an ABSENT file means "unknown" — the caller must NOT downgrade a
+    previously-good composed file to base-only on a guess, so it skips the write
+    (like a missing base). Prevents a vanished enabled-file from silently
+    stripping the plugin section on the next shell-hook recompose."""
     path = Path(enabled_file)
     if not path.is_file():
-        return []
+        return None
     return path.read_text(encoding="utf-8").split()
 
 
@@ -123,17 +128,25 @@ def default_targets(home):
 
 
 def run(base, plugins_root, enabled_file, targets, announce=False):
-    """Compose the file and write every target. Returns 0 on success; a missing
-    base is a warn-and-skip (return 1) so the shell hook never clobbers existing
-    targets with nothing when the mount is briefly absent."""
+    """Compose the file and write every target. Returns 0 on success. Two
+    warn-and-skip guards (return 1) keep the shell hook from clobbering a
+    previously-good file with a downgrade: a missing base (mount briefly gone),
+    and an ABSENT enabled-file (unknown plugin set — empty would be authoritative
+    'no plugins', but absent must not become a base-only guess). up.sh writes
+    both before its own compose, so neither guard fires on the normal path."""
     base_path = Path(base)
     if not base_path.is_file():
         print(f"  ⚠ base rules {base_path} not found — leaving agent rules files as-is",
               file=sys.stderr)
         return 1
 
-    base_text = _read_text(base_path)
     names = read_enabled(enabled_file)
+    if names is None:
+        print(f"  ⚠ enabled-plugins file {enabled_file} absent — leaving agent rules files as-is",
+              file=sys.stderr)
+        return 1
+
+    base_text = _read_text(base_path)
     fragments = load_fragments(plugins_root, names)
     composed = compose(base_text, fragments)
 
