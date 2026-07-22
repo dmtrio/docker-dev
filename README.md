@@ -334,3 +334,8 @@ created automatically by `up.sh`). Point your WireGuard/VPN layer at that
 CIDR once and every container is reachable at its bridge IP from any
 enrolled device — `up.sh` prints the IP in its summary. sshd and the mosh
 range stay loopback/tunnel-only; nothing listens publicly.
+
+## License
+
+[MIT](LICENSE) © Demetrio Urquidi. Use it, modify it, ship it — just keep
+the copyright and license notice on copies and derivatives.
