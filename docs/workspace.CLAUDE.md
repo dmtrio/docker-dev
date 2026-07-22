@@ -25,10 +25,12 @@ them live in VS Code/Cursor, so visibility rules are not optional.
 - **Remove** it after the branch is merged or abandoned:
   `git -C /workspace/main worktree remove ../worktrees/<name> && git -C /workspace/main worktree prune`
 - **After every create or remove**, update `folders` in
-  `/workspace/dev.code-workspace` to exactly match
-  `git -C /workspace/main worktree list`: the `main` entry first, then one
-  entry per worktree (`{"path": "worktrees/<name>", "name": "<name>"}`),
-  sorted by name. Valid JSON, no trailing commas.
+  `/workspace/dev.code-workspace`: the `main` entry first, then one entry per
+  worktree (`{"path": "worktrees/<name>", "name": "<name>"}`) — matching
+  `git -C /workspace/main worktree list`, sorted by name — then a fixed trailing
+  `{"path": "/artifacts", "name": "artifacts"}` entry. Keep the `artifacts`
+  entry; only the worktree entries track the worktree list. Valid JSON, no
+  trailing commas.
 - Do **not** use Claude Code's built-in session worktrees for feature work —
   they live in hidden paths and defeat the visibility requirement.
 

@@ -2,14 +2,21 @@
 
 install: |
   uv tool install -p 3.13 serena-agent
+  # Bake the worktree-friendly context (see derive_context.py + README). The
+  # plugins tree is COPYed to /opt/plugins before this install block runs.
+  python3 /opt/plugins/serena/derive_context.py
 
 # LOCAL server: command + args ONLY (up.sh hard-fails on other fields, so every
 # agent wires identically). "$PWD" roots serena at the session's checkout —
 # never hardcode a path, or worktrees read/edit the wrong tree (see README).
+# --context ide-assistant-worktrees is our derived copy of ide-assistant with
+# single_project:false, so --project auto-rooting still applies BUT the
+# activate_project tool survives — the one combination that lets a single agent
+# reach across worktrees (see README + derive_context.py).
 mcp:
   serena:
     command: bash
-    args: [-c, 'exec serena start-mcp-server --context ide-assistant --project "$PWD"']
+    args: [-c, 'exec serena start-mcp-server --context ide-assistant-worktrees --project "$PWD"']
 
 # Azure-blob hosts for serena's lazily-downloaded language servers (see README).
 egress:
