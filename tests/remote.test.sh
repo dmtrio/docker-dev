@@ -24,7 +24,7 @@ fail() { echo "  ✗ $1"; FAILURES=$((FAILURES + 1)); }
 pass() { echo "  ✓ $1"; }
 
 echo "── syntax"
-for f in up.sh src/entrypoint.sh src/init-firewall.sh src/tmux-notify.sh src/mosh-server-wrapper.sh src/tmux-landing.bashrc; do
+for f in up.sh src/entrypoint.sh src/init-firewall.sh src/tmux-notify.sh src/mosh-server-wrapper.sh src/tmux-landing.bashrc src/freshness-landing.bashrc; do
     bash -n "$f" && pass "bash -n $f" || fail "$f has syntax errors"
 done
 

@@ -262,6 +262,9 @@ Agents propose rule changes via PR; for an external rules repo, `up.sh`
     key-file composition `up.sh` sources
   - `entrypoint.sh`, `init-firewall.sh`, `tmux*`, `mosh-server-wrapper.sh` —
     baked into the image
+  - `freshness.py` + `freshness-landing.bashrc` — the no-network landing
+    readout of container config age (last `up` + image build date); `up.sh`
+    stamps the two timestamps into `/etc/environment` after boot
 - `compose/` — `docker-compose.local.yml` (base) plus the `ssh.yml` / `mosh.yml`
   overlays `up.sh` applies for a manifest's `ssh:` / `remote.mosh` settings
 - `docs/` — `script.md` (every script, grouped by lifecycle), `TIPS.md`,
