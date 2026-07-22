@@ -35,11 +35,14 @@ acting — don't treat a partial bundle as the whole picture.
   indexes/queries the checkout the agent was started in (main, or a worktree).
   Each checkout keeps its own repo-local `.archex/` state (gitignored — see the
   repo `.gitignore`, alongside serena's `.serena/`).
-- **First use in a fresh checkout indexes lazily.** If `.archex/` is absent the
-  server runs `archex init && archex index` before serving — so the *first*
-  archex tool call in a new checkout responds a little late while the index
-  builds. Nothing else blocks: the index build runs inside the archex MCP
-  subprocess, never your terminal, shell, or other tools/MCP servers.
+- **First use in a fresh checkout indexes lazily.** The server builds the index
+  (`archex init && archex index`) before serving — so the *first* archex tool
+  call in a new checkout responds a little late while the index builds. Nothing
+  else blocks: the build runs inside the archex MCP subprocess, never your
+  terminal, shell, or other tools/MCP servers. The build is gated on a completion
+  sentinel written only after `archex index` succeeds, so a failed or interrupted
+  first index **self-heals** — the next start rebuilds rather than serving a
+  partial index. Force a clean rebuild any time with `rm -rf .archex`.
 - **`archex doctor`** for a health check; **`archex query "…"`** to test
   retrieval from the shell.
 - **Vectors are opt-in.** The default BM25 retrieval is fully offline. Enabling
