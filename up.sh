@@ -264,7 +264,8 @@ if [ ! -f /workspace/dev.code-workspace ]; then
 cat > /workspace/dev.code-workspace <<EOF
 {
   "folders": [
-    { "path": "main", "name": "main" }
+    { "path": "main", "name": "main" },
+    { "path": "/artifacts", "name": "artifacts" }
   ],
   "settings": {}
 }
