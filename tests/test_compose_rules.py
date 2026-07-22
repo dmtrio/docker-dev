@@ -99,6 +99,16 @@ class LoadFragmentsTests(unittest.TestCase):
         # serena has a fragment but is NOT in the enabled list
         self.assertEqual(compose_rules.load_fragments(self.root, []), [])
 
+    def test_unsafe_names_rejected(self):
+        # A name that could escape the plugins root must never reach a read,
+        # even if a matching file happens to exist outside the tree.
+        outside = self.root.parent / "AGENTS.md"
+        outside.write_text("## Evil\n")
+        self.addCleanup(lambda: outside.unlink(missing_ok=True))
+        for bad in ("..", "../..", "a/b", "/etc", ".", "\\x"):
+            with self.subTest(name=bad):
+                self.assertEqual(compose_rules.load_fragments(self.root, [bad]), [])
+
 
 class RunTests(unittest.TestCase):
     def setUp(self):

@@ -79,6 +79,14 @@ def read_enabled(enabled_file):
     return path.read_text(encoding="utf-8").split()
 
 
+def _safe_name(name):
+    """A plugin name is a single path segment. up.sh feeds manifest-validated
+    names ([A-Za-z0-9_-]), but this module also reads an on-disk enabled-file
+    standalone, so reject anything that could escape the plugins root (a '..'
+    or a separator) before it reaches a filesystem read — defense in depth."""
+    return name and name not in (".", "..") and "/" not in name and "\\" not in name
+
+
 def load_fragments(plugins_root, names):
     """(name, text) for each enabled plugin that ships a non-empty AGENTS.md,
     in the given order (manifest order — deterministic, author-controllable).
@@ -86,6 +94,8 @@ def load_fragments(plugins_root, names):
     root = Path(plugins_root)
     fragments = []
     for name in names:
+        if not _safe_name(name):
+            continue
         frag = root / name / FRAGMENT_NAME
         if not frag.is_file():
             continue
