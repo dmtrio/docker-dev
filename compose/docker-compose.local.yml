@@ -81,6 +81,9 @@ services:
       - codex-auth:/home/coder/.codex
       - gemini-state:/home/coder/.gemini
       - cursor-state:/home/coder/.cursor
+      # cursor-agent writes its login token (access/refresh) to ~/.config/cursor,
+      # NOT ~/.cursor — persist it too, or every rebuild forces a re-login.
+      - cursor-auth:/home/coder/.config/cursor
       - gh-auth:/home/coder/.config/gh
 
     # Memory cap comes from the capability profile (coding needs headroom
@@ -94,6 +97,7 @@ volumes:
   codex-auth:
   gemini-state:
   cursor-state:
+  cursor-auth:
   gh-auth:
 
 # Shared bridge (RFC 04): every dev-agent container joins ONE user-defined
