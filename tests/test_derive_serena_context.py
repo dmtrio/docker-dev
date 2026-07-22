@@ -86,5 +86,28 @@ class DestPathTests(unittest.TestCase):
         self.assertEqual(dest.parent.parent.name, ".serena")
 
 
+class PluginWiringTests(unittest.TestCase):
+    """Guard against drift between derive_context.py and plugins/serena/plugin.yml.
+
+    The three parts must agree or a container's serena fails to resolve its context
+    at startup: the install block must invoke this script, and the launch args must
+    name exactly the context the script writes.
+    """
+
+    def setUp(self):
+        self.plugin_yml = (Path(__file__).parent.parent / "plugins" / "serena" / "plugin.yml").read_text()
+
+    def test_install_invokes_the_derivation_script(self):
+        self.assertIn("derive_context.py", self.plugin_yml)
+
+    def test_launch_args_name_the_derived_context(self):
+        self.assertIn(f"--context {derive_context.DERIVED_NAME}", self.plugin_yml)
+
+    def test_launch_args_still_pin_the_project_for_auto_rooting(self):
+        # Auto-rooting depends on --project being passed; losing it would regress the
+        # "serena follows the launch checkout" behavior the derived context preserves.
+        self.assertIn('--project "$PWD"', self.plugin_yml)
+
+
 if __name__ == "__main__":
     unittest.main()
