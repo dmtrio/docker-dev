@@ -276,14 +276,19 @@ fi
 docker cp "$SCRIPT_DIR/docs/workspace.CLAUDE.md" "dev-agent-$NAME:/workspace/CLAUDE.md"
 docker exec "dev-agent-$NAME" chown coder:coder /workspace/CLAUDE.md
 
-# ── Global rules fan-out (symlinks into the read-only /agent-rules mount) ────
-# One AGENTS.md source; each tool's global file points at it. Symlinks into
-# a mounted DIR survive host-side editor renames. Skills shared the same way.
-docker exec -u coder "dev-agent-$NAME" bash -c '
-mkdir -p /home/coder/.claude /home/coder/.codex /home/coder/.gemini
-ln -sfn /agent-rules/AGENTS.md /home/coder/.claude/CLAUDE.md
-ln -sfn /agent-rules/AGENTS.md /home/coder/.codex/AGENTS.md
-ln -sfn /agent-rules/AGENTS.md /home/coder/.gemini/GEMINI.md
+# ── Global rules fan-out (compose base rules + enabled-plugin fragments) ─────
+# Each tool's global file is GENERATED (was a symlink to the read-only
+# /agent-rules mount): the base rules plus the AGENTS.md fragment of every
+# plugin THIS container enabled. The mount is :ro, so a fragment cannot be
+# appended there — compose_rules.py reads it and writes real files into home.
+# Output is byte-identical to the base until a plugin ships a fragment, and an
+# interactive-shell hook (src/rules-compose.bashrc) recomposes so host-side
+# edits to the base stay live. PLUGINS (space-separated enabled names) is the
+# source of truth both composes read; skills stays a symlink (a dir, not text).
+docker exec -u coder -e ENABLED_PLUGINS="$PLUGINS" "dev-agent-$NAME" bash -c '
+mkdir -p /home/coder/.claude /home/coder/.codex /home/coder/.gemini /home/coder/.config/dev-agent
+printf "%s\n" "${ENABLED_PLUGINS:-}" > /home/coder/.config/dev-agent/enabled-plugins
+python3 /usr/local/lib/dev-agent/compose_rules.py --announce
 [ -e /home/coder/.claude/skills ] && [ ! -L /home/coder/.claude/skills ] || ln -sfn /agent-rules/skills /home/coder/.claude/skills
 if [ ! -f /workspace/rules.local.md ]; then
 cat > /workspace/rules.local.md <<EOF
@@ -294,7 +299,7 @@ Not committed (lives outside the repo). Loaded by all agents alongside
 /agent-rules/AGENTS.md. Precedence: repo rules > this file > global rules.
 EOF
 fi
-echo "  ✓ global rules + skills linked (read-only; changes go via PR to the rules repo)"
+echo "  ✓ skills linked (read-only; rules changes go via PR to the rules repo)"
 '
 
 # ── Wire agent MCP configs (one exec into the baked-in Python module) ────────

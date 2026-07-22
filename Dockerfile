@@ -233,6 +233,12 @@ RUN apt-get update && apt-get install -y openssh-server \
 COPY src/wire_plugins.py /usr/local/lib/dev-agent/wire_plugins.py
 RUN chmod 644 /usr/local/lib/dev-agent/wire_plugins.py
 
+# Composes each agent's global rules file = base rules (read-only /agent-rules
+# mount) + the AGENTS.md fragments of the plugins a container enables. up.sh
+# runs it at `up`; the rules-compose.bashrc hook (below) re-runs it per shell.
+COPY src/compose_rules.py /usr/local/lib/dev-agent/compose_rules.py
+RUN chmod 644 /usr/local/lib/dev-agent/compose_rules.py
+
 ENV SSH_ENABLED=false
 
 # ── Remote session tools: tmux + mosh (RFC 04) ───────────────────────────────
@@ -263,6 +269,14 @@ RUN chmod +x /usr/local/bin/mosh-server
 # is present in the environment (remote.notify: ntfy).
 COPY src/tmux-notify.sh /usr/local/bin/tmux-notify.sh
 RUN chmod +x /usr/local/bin/tmux-notify.sh
+
+# Recompose agent global rules (base + enabled-plugin fragments) on each
+# interactive shell. Sourced BEFORE the tmux-landing hook, which execs tmux and
+# never returns — placing it after would skip it in the login shell.
+COPY src/rules-compose.bashrc /usr/local/share/rules-compose.bashrc
+RUN echo '' >> /home/$USERNAME/.bashrc \
+    && echo '# Recompose agent rules (base + enabled-plugin fragments) on interactive shells' >> /home/$USERNAME/.bashrc \
+    && echo '. /usr/local/share/rules-compose.bashrc' >> /home/$USERNAME/.bashrc
 
 # Land interactive SSH/mosh logins in the shared tmux session. The logic
 # lives in a sourced file (lintable, readable); the hook must be the LAST
