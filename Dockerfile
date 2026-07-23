@@ -212,6 +212,12 @@ RUN apt-get update && apt-get install -y \
 COPY src/init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod +x /usr/local/bin/init-firewall.sh
 
+# Per-org git credential router (entrypoint installs it as the github.com
+# credential helper). Routes by repo owner to GH_TOKEN_<owner>, falling back to
+# the container GH_TOKEN then gh's human login. See src/git-credential-org.sh.
+COPY src/git-credential-org.sh /usr/local/bin/git-credential-org
+RUN chmod +x /usr/local/bin/git-credential-org
+
 # ── SSH server (always installed, runs only when SSH_ENABLED=true) ──────────
 # One image everywhere: Mac attach-mode and any remote Linux host. The manifest's ssh:
 # section turns sshd on at RUNTIME (entrypoint injects SSH_AUTHORIZED_KEY).

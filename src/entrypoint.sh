@@ -56,10 +56,16 @@ su coder -c 'mkdir -p /workspace/repos /workspace/worktrees'
 # ── Git safe directory ────────────────────────────────────────────────────────
 su -c "git config --global safe.directory /workspace" coder
 
-# ── Git over HTTPS via gh credential helper ──────────────────────────────────
-# One credential lane for both API and git transport: agents present
-# GH_TOKEN (shim env), humans fall back to the shared gh login. No SSH keys.
-su -c "git config --global credential.'https://github.com'.helper '!gh auth git-credential'" coder
+# ── Git over HTTPS via the per-org credential router ─────────────────────────
+# One credential lane for both API and git transport, routed by repo OWNER:
+# git-credential-org returns GH_TOKEN_<owner> if set (per-org identity), else
+# the container GH_TOKEN, else defers to `gh auth git-credential` for the human
+# login — so agents present the right per-org token and humans still fall back
+# to the shared gh login. No SSH keys. useHttpPath=true feeds the repo path to
+# the router so it can read the owner (and makes credential caching per-path,
+# which is harmless here). Router is github-only for now; gitea is a follow-up.
+su -c "git config --global credential.useHttpPath true" coder
+su -c "git config --global credential.'https://github.com'.helper /usr/local/bin/git-credential-org" coder
 
 # ── SSH mode vs attach mode ───────────────────────────────────────────────────
 if [ "$SSH_ENABLED" = "true" ]; then

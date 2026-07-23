@@ -220,6 +220,33 @@ GitHub rides the same path: agents act as the machine user (`GH_TOKEN`); your
 personal login never enters a container unless you `gh auth login` there, and
 agent PRs/comments show as the bot (you review and merge as you).
 
+**Per-org git identity.** When one machine user can't reach every repo (it isn't
+a member of every org), give the container its own token — and route by repo
+**owner** — from the manifest's `git:` block:
+
+```yaml
+git:
+  name:  "Hank Agent"
+  email: "agent+hank@dmetr.io"
+  token: GH_TOKEN_hank         # this container's default credential (secrets.env var NAME)
+  orgs:                        # optional per-owner overrides (multi-org containers only)
+    vendor:
+      token: GH_TOKEN_vendor   # secrets.env var NAME
+      name:  "Vendor Bot"      # optional — repo-local identity for vendor/* repos
+      email: "bot@vendor.io"
+```
+
+`token`/`orgs.*.token` name vars in `secrets.env` (values never enter the
+manifest). At `up`, a repo owned by `<owner>` authenticates with `GH_TOKEN_<owner>`
+if set, else the container's `git.token`, else the global `GH_TOKEN` — resolved by
+the `git-credential-org` helper on every `github.com` fetch/push. A `git.orgs`
+owner with a `name`/`email` also gets that identity stamped repo-locally, so its
+commits carry the right author. A `token:` naming a var that isn't in `secrets.env`
+**hard-fails the apply** — never a silent fall-back to the wrong identity. This is
+routing + attribution, not isolation: every org's token sits in each agent's
+`<agent>.env`, so a repo whose token must be unreachable by other work belongs in
+a separate container.
+
 ## Rules & skills (shared knowledge, never shared identity)
 
 The rules dir mounts read-only at `/agent-rules` in every container:
