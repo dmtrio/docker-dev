@@ -126,6 +126,12 @@ assert_contains "unknown owner → default GH_TOKEN" "$out" "password=defval"
 out=$(cred acme-corp/thing.git GH_TOKEN_acme_corp=atok GH_TOKEN=defval)
 assert_contains "hyphenated owner sanitized to GH_TOKEN_acme_corp" "$out" "password=atok"
 
+# case-folding parity: a mixed-case URL owner (github is case-insensitive; the
+# manifest lowercases) must read the lowercased GH_TOKEN_<owner>, not fall back.
+out=$(cred PlanetExpress/ship.git GH_TOKEN_planetexpress=ptok GH_TOKEN=defval)
+assert_contains "mixed-case owner folds to GH_TOKEN_planetexpress" "$out" "password=ptok"
+assert_absent "mixed-case owner does not fall back to default" "$out" "password=defval"
+
 # neither the per-org nor the default token set → defer to gh (human login).
 # Mock gh so the fallback is deterministic and offline.
 mkdir -p "$WORK/ghbin"
