@@ -226,14 +226,14 @@ a member of every org), give the container its own token — and route by repo
 
 ```yaml
 git:
-  name:  "Hank Agent"
-  email: "agent+hank@dmetr.io"
-  token: GH_TOKEN_hank         # this container's default credential (secrets.env var NAME)
-  orgs:                        # optional per-owner overrides (multi-org containers only)
-    vendor:
-      token: GH_TOKEN_vendor   # secrets.env var NAME
-      name:  "Vendor Bot"      # optional — repo-local identity for vendor/* repos
-      email: "bot@vendor.io"
+  name:  "Fry Agent"
+  email: "agent+fry@example.com"
+  token: GH_TOKEN_fry              # this container's default credential (secrets.env var NAME)
+  orgs:                            # optional per-owner overrides (multi-org containers only)
+    planetexpress:
+      token: GH_TOKEN_planetexpress   # secrets.env var NAME
+      name:  "Leela Bot"              # optional — repo-local identity for planetexpress/* repos
+      email: "bot@planetexpress.example"
 ```
 
 `token`/`orgs.*.token` name vars in `secrets.env` (values never enter the
