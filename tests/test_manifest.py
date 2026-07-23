@@ -185,11 +185,23 @@ class TestYqSemanticsPins(unittest.TestCase):
     """The jq/yq quirks the port must NOT silently fix."""
 
     def test_alternative_operator_fires_on_false(self):
-        d = derive({"plugins": False, "repo": False, "memory": False, "tools": False})
+        d = derive({"plugins": False, "repos": False, "memory": False, "tools": False})
         self.assertEqual(d["PLUGINS"], "")
-        self.assertEqual(d["REPO_URL"], "")
+        self.assertEqual(d["REPOS"], "")
         self.assertEqual(d["MEM_LIMIT"], "2g")
         self.assertEqual(d["INSTALL_AIDER"], "true")  # default tool set
+
+    def test_legacy_repo_key_rejected(self):
+        # layout v2: any presence of repo: (even null/false) is a hard error.
+        for val in ("https://github.com/x/app.git", "", False, None):
+            with self.subTest(val=val):
+                with self.assertRaises(m.ManifestError) as cm:
+                    derive({"repo": val})
+                self.assertIn("repos:", str(cm.exception))
+                self.assertEqual(
+                    str(cm.exception),
+                    "manifest repo: is gone — declare repos: [<url>, ...] instead "
+                    "(layout v2: each repo clones to /workspace/repos/<name>)")
 
     def test_tools_contains_is_substring_match(self):
         d = derive({"tools": ["claude-code"]})
@@ -215,6 +227,107 @@ class TestYqSemanticsPins(unittest.TestCase):
         self.assertEqual(m.agent_for_ref("cursor_agent"), "")  # no leading _
         self.assertEqual(m.agent_for_ref("a_pi"), "pi")
         self.assertEqual(m.agent_for_ref("nope"), "")
+
+
+class TestRepos(unittest.TestCase):
+    """layout v2: repos: list → REPOS name<tab>url\\n lines."""
+
+    def test_absent_repos_is_empty(self):
+        self.assertEqual(derive({})["REPOS"], "")
+
+    def test_string_entry_strips_git_suffix(self):
+        d = derive({"repos": ["https://github.com/x/app.git"]})
+        self.assertEqual(d["REPOS"], "app\thttps://github.com/x/app.git\n")
+
+    def test_trailing_slash_url(self):
+        d = derive({"repos": ["https://github.com/x/app/"]})
+        self.assertEqual(d["REPOS"], "app\thttps://github.com/x/app/\n")
+
+    def test_ssh_style_url_name(self):
+        d = derive({"repos": ["git@github.com:org/thing.git"]})
+        self.assertEqual(d["REPOS"], "thing\tgit@github.com:org/thing.git\n")
+
+    def test_map_entry_with_explicit_name(self):
+        d = derive({"repos": [{"name": "myapp", "url": "https://github.com/x/app.git"}]})
+        self.assertEqual(d["REPOS"], "myapp\thttps://github.com/x/app.git\n")
+
+    def test_map_entry_without_name(self):
+        d = derive({"repos": [{"url": "https://github.com/x/app.git"}]})
+        self.assertEqual(d["REPOS"], "app\thttps://github.com/x/app.git\n")
+
+    def test_multiple_entries_preserve_manifest_order(self):
+        d = derive({"repos": [
+            "https://github.com/x/beta.git",
+            {"name": "alpha", "url": "https://github.com/x/other.git"},
+            "git@github.com:org/gamma.git",
+        ]})
+        self.assertEqual(
+            d["REPOS"],
+            "beta\thttps://github.com/x/beta.git\n"
+            "alpha\thttps://github.com/x/other.git\n"
+            "gamma\tgit@github.com:org/gamma.git\n")
+
+    def test_duplicate_derived_names_raise(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"repos": [
+                "https://github.com/x/app.git",
+                "https://github.com/y/app.git",
+            ]})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest repos failed validation:\n"
+            "  repos entry: duplicate name 'app'")
+
+    def test_bad_name_leading_dot_raises(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"repos": [{"name": ".hidden", "url": "https://github.com/x/app.git"}]})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest repos failed validation:\n"
+            "  repos entry: illegal name '.hidden' "
+            "(must start with letter/digit/underscore; only letters, digits, . _ - thereafter — "
+            "it becomes a directory under /workspace/repos)")
+
+    def test_bad_name_slash_raises(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"repos": [{"name": "a/b", "url": "https://github.com/x/app.git"}]})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest repos failed validation:\n"
+            "  repos entry: illegal name 'a/b' "
+            "(must start with letter/digit/underscore; only letters, digits, . _ - thereafter — "
+            "it becomes a directory under /workspace/repos)")
+
+    def test_blank_url_in_map_raises(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"repos": [{"name": "x", "url": ""}]})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest repos failed validation:\n"
+            "  repos entry: url must be a non-empty string")
+
+    def test_entry_wrong_type_raises(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"repos": [1]})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest repos failed validation:\n"
+            "  repos entry: must be a URL string or {name, url} map (got a number)")
+
+    def test_repos_not_a_list_raises(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"repos": "https://github.com/x/app.git"})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest repos: must be a list of URLs or {name, url} maps")
+
+    def test_url_with_space_raises(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"repos": ["https://github.com/x/a pp.git"]})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest repos failed validation:\n"
+            "  repos entry: URL 'https://github.com/x/a pp.git' contains whitespace")
 
 
 class TestDerivedValues(unittest.TestCase):

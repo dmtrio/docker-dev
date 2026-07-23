@@ -105,8 +105,9 @@ The host commands above live in `bin/`; `src/` is internal source — the
 `Dockerfile` and run themselves inside the container (listed for completeness).
 
 - **`src/entrypoint.sh`** — the container's PID 1. Persists `~/.claude.json`, runs
-  the firewall (fail-loud), applies git config, guarantees `/workspace/main`
-  exists, then either starts sshd (`SSH_ENABLED=true`) or idles for attach mode.
+  the firewall (fail-loud), applies git config, guarantees `/workspace/repos` and
+  `/workspace/worktrees` exist, then either starts sshd (`SSH_ENABLED=true`) or
+  idles for attach mode.
 - **`src/init-firewall.sh`** — builds the default-deny egress allowlist at boot
   (GitHub IP ranges + dnsmasq-mirrored zones), verifies itself, and exits non-zero
   on failure so the container never runs with open egress. `bin/allow-egress.sh` edits

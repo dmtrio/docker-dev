@@ -108,7 +108,7 @@ echo ",$EGRESS_ALL," | grep -qF ",blob.core.windows.net," \
 # full emitted variable set. grep first: quoted multi-line values (e.g.
 # PLUGIN_MCP_ENTRIES) have continuation lines that are not assignments.
 EMITTED=$(printf '%s\n' "$ALL_DERIVED" | grep -oE '^[A-Z_]+=' | tr -d = | LC_ALL=C sort | tr '\n' ' ')
-EXPECTED="AGENT_SECRETS AGENT_SERVERS_JSON AGENT_SERVER_SLOTS CONTAINER_NTFY_TOPIC CONTAINER_NTFY_URL EGRESS EGRESS_CIDRS FORGE GIT_USER_EMAIL GIT_USER_NAME HOST_MCP_PORTS INSTALL_AIDER INSTALL_CLAUDE INSTALL_CODEX INSTALL_CURSOR INSTALL_GEMINI INSTALL_PI MEM_LIMIT MOSH_PORTS MOSH_PORTS_DASH PLUGINS PLUGIN_ENV_SECRETS PLUGIN_MCP_ENTRIES REMOTE_MOSH REMOTE_NOTIFY REMOTE_TMUX REPO_URL SSH_BIND SSH_PORT "
+EXPECTED="AGENT_SECRETS AGENT_SERVERS_JSON AGENT_SERVER_SLOTS CONTAINER_NTFY_TOPIC CONTAINER_NTFY_URL EGRESS EGRESS_CIDRS FORGE GIT_USER_EMAIL GIT_USER_NAME HOST_MCP_PORTS INSTALL_AIDER INSTALL_CLAUDE INSTALL_CODEX INSTALL_CURSOR INSTALL_GEMINI INSTALL_PI MEM_LIMIT MOSH_PORTS MOSH_PORTS_DASH PLUGINS PLUGIN_ENV_SECRETS PLUGIN_MCP_ENTRIES REMOTE_MOSH REMOTE_NOTIFY REMOTE_TMUX REPOS SSH_BIND SSH_PORT "
 [ "$EMITTED" = "$EXPECTED" ] \
     && pass "--derive emits exactly the variable set up.sh consumes" \
     || fail "emitted variable set changed (update up.sh consumers + this pin): $EMITTED"
@@ -278,6 +278,14 @@ grep -qF -- "config-only, nothing to bake" Dockerfile \
 grep -qF -- "COPY src/wire_plugins.py" Dockerfile \
     && pass "Dockerfile bakes src/wire_plugins.py into the image" \
     || fail "Dockerfile no longer bakes wire_plugins.py (up.sh execs it)"
+# code_workspace.py merges the repo list into dev.code-workspace (logic is
+# unit-tested by tests/test_code_workspace.py; these pins prove the wiring).
+grep -qF -- "COPY src/code_workspace.py" Dockerfile \
+    && pass "Dockerfile bakes src/code_workspace.py into the image" \
+    || fail "Dockerfile no longer bakes code_workspace.py (up.sh execs it)"
+grep -qF -- "python3 /usr/local/lib/dev-agent/code_workspace.py /workspace/dev.code-workspace" up.sh \
+    && pass "up.sh invokes code_workspace.py against dev.code-workspace" \
+    || fail "up.sh no longer wires to code_workspace.py (update this suite!)"
 # up.sh sources the extracted key-composition helper and calls it (the logic is
 # unit-tested by tests/bash.test.sh; this pin proves up.sh still wires to it).
 grep -qF -- '. "$SCRIPT_DIR/src/keyfiles.sh"' up.sh \

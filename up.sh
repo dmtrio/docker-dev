@@ -244,34 +244,55 @@ if [ "$READY" = "false" ]; then
     exit 1
 fi
 
-# ── Bootstrap workspace (idempotent) ──────────────────────────────────────────
-if [ -n "$REPO_URL" ]; then
-    # The bootstrap exec isn't shim-launched, so hand it the machine-user
-    # token explicitly for private-repo clones over HTTPS.
-    CLONE_ENV=""
-    [ -n "${GH_TOKEN:-}" ] && CLONE_ENV="-e GH_TOKEN=$GH_TOKEN"
-    docker exec $CLONE_ENV -u coder "dev-agent-$NAME" bash -c \
-        "[ -d /workspace/main/.git ] || git clone '$REPO_URL' /workspace/main" \
-        || echo "WARNING: clone failed — private repo needs either GH_TOKEN in secrets.env (machine user must have repo access) or a one-time 'gh auth login' in the container"
-else
-    docker exec -u coder "dev-agent-$NAME" bash -c \
-        "[ -d /workspace/main/.git ] || git init -b main /workspace/main"
+# ── Bootstrap workspace (idempotent; layout v2: /workspace/repos/<name>) ─────
+# A v1 workspace (/workspace/main) cannot migrate in place — worktree metadata
+# pins absolute paths — so refuse loudly instead of half-operating on a mixed
+# layout. An EMPTY main/ (v1 entrypoint pre-create, never bootstrapped) is
+# harmless: rmdir it and proceed. The refusal recommends the selective volume
+# reset, NOT --purge: purge would also delete the auth volumes (agent logins,
+# per-project state) that the reset — and the port shim below — preserve.
+docker exec -u coder "dev-agent-$NAME" bash -c 'rmdir /workspace/main 2>/dev/null || true'
+if docker exec -u coder "dev-agent-$NAME" bash -c '[ -e /workspace/main ]'; then
+    echo "Error: this workspace uses layout v1 (/workspace/main). Layout v2 puts every repo under /workspace/repos/<name>."
+    echo "Push every branch you care about, then reset the workspace volume (agent auth/state survives) and rerun:"
+    echo "  ./down.sh $NAME && docker volume rm dev-agent-${NAME}_workspace && ./up.sh $NAME"
+    exit 1
 fi
 
-docker exec -u coder "dev-agent-$NAME" bash -c '
-mkdir -p /workspace/worktrees
-if [ ! -f /workspace/dev.code-workspace ]; then
-cat > /workspace/dev.code-workspace <<EOF
-{
-  "folders": [
-    { "path": "main", "name": "main" },
-    { "path": "/artifacts", "name": "artifacts" }
-  ],
-  "settings": {}
-}
+if [ -n "$REPOS" ]; then
+    # The bootstrap exec isn't shim-launched, so hand it the machine-user
+    # token explicitly for private-repo clones over HTTPS. Name and URL ride
+    # as env vars — never spliced into the bash -c string.
+    CLONE_ENV=""
+    [ -n "${GH_TOKEN:-}" ] && CLONE_ENV="-e GH_TOKEN=$GH_TOKEN"
+    while IFS=$'\t' read -r RNAME RURL; do
+        [ -n "$RNAME" ] || continue
+        docker exec $CLONE_ENV -e "REPO_NAME=$RNAME" -e "REPO_URL=$RURL" -u coder "dev-agent-$NAME" bash -c \
+            '[ -d "/workspace/repos/$REPO_NAME/.git" ] || git clone "$REPO_URL" "/workspace/repos/$REPO_NAME"' \
+            || echo "WARNING: clone of '$RNAME' failed — private repo needs either GH_TOKEN in secrets.env (machine user must have repo access) or a one-time 'gh auth login' in the container"
+    done <<EOF
+$REPOS
 EOF
+else
+    docker exec -u coder "dev-agent-$NAME" bash -c \
+        "[ -d /workspace/repos/scratch/.git ] || git init -b main /workspace/repos/scratch"
 fi
-'
+
+# DEPRECATED(layout-v1 port): per-project agent state (session history, auto-
+# memory) is keyed by the start-dir path — v1 keyed /workspace/main as
+# -workspace-main; the v2 default start dir (/workspace/repos) keys as
+# -workspace-repos. Copy once so a workspace reset keeps its memory (the auth
+# volume the state lives in survives the reset). Remove this block once every
+# container has been recreated on layout v2.
+docker exec -u coder "dev-agent-$NAME" bash -c \
+    'src=/home/coder/.claude/projects/-workspace-main; dst=/home/coder/.claude/projects/-workspace-repos; if [ -d "$src" ] && [ ! -e "$dst" ]; then cp -a "$src" "$dst"; fi'
+
+# Merge the manifest's repo list into dev.code-workspace (idempotent): a
+# manifest edit on a live container adds its folder entry on the next up,
+# while agent-managed worktree entries and hand-added folders survive.
+REPO_NAMES="$(printf '%s' "$REPOS" | cut -f1 | tr '\n' ' ')"
+docker exec -u coder -e REPO_NAMES="${REPO_NAMES:-scratch}" "dev-agent-$NAME" \
+    python3 /usr/local/lib/dev-agent/code_workspace.py /workspace/dev.code-workspace
 
 docker cp "$SCRIPT_DIR/docs/workspace.CLAUDE.md" "dev-agent-$NAME:/workspace/CLAUDE.md"
 docker exec "dev-agent-$NAME" chown coder:coder /workspace/CLAUDE.md
@@ -372,7 +393,7 @@ echo "  dev-agent-$NAME is up (manifest: $MANIFEST)"
 echo ""
 echo "  VS Code / Cursor:  Dev Containers: Attach to Running Container"
 echo "  Terminal:          docker exec -it -u coder dev-agent-$NAME bash"
-echo "  Claude:            cd /workspace/main && claude"
+echo "  Claude:            cd /workspace/repos && claude   (one session over every repo)"
 [ -n "$SSH_PORT" ] && echo "  SSH:               ssh -p $SSH_PORT coder@$( [ "$SSH_BIND" = "127.0.0.1" ] && echo localhost || echo '<this-host>' )"
 if [ "$REMOTE_TMUX" = "true" ] || [ "$REMOTE_MOSH" = "true" ]; then
     TUNNEL_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "dev-agent-$NAME" 2>/dev/null || true)"

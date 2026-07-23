@@ -40,18 +40,18 @@ if [ -n "$GIT_USER_EMAIL" ]; then
 fi
 
 # (No /workspace/.mcp.json symlink: Claude Code reads .mcp.json only from
-# its start directory — the per-container config lives in /workspace/main
-# and is symlinked into each worktree per the workspace contract.)
+# its start directory — the canonical per-container config lives at
+# /workspace/repos/.mcp.json and is symlinked into each repo by wire_plugins.py
+# and into each worktree per the workspace contract.)
 
 # ── Workspace skeleton (always present so editors can attach) ────────────────
-# The editor opens /workspace/dev.code-workspace, whose "main" folder makes the
-# integrated-terminal cwd /workspace/main. Guarantee that path exists at EVERY
-# boot — independent of whether up.sh's clone/init bootstrap has run yet, and
-# surviving a private-repo clone that failed — so "Attach to Running Container"
-# never dies with 'cwd "/workspace/main" does not exist'. Left empty (no .git)
-# when unbootstrapped: git clone accepts an existing empty dir, and up.sh's
-# `[ -d /workspace/main/.git ]` guard still retries the clone on a later rerun.
-su coder -c 'mkdir -p /workspace/main /workspace/worktrees'
+# Layout v2: every repo lives under /workspace/repos/<name>. Guarantee the
+# container-owned anchor dirs exist at EVERY boot — independent of whether
+# up.sh's clone bootstrap has run yet, and surviving a failed private-repo
+# clone — so "Attach to Running Container" never dies on a missing cwd. The
+# repo dirs themselves appear only when their clone succeeds; up.sh's
+# per-repo `[ -d …/.git ]` guard retries failed clones on a later rerun.
+su coder -c 'mkdir -p /workspace/repos /workspace/worktrees'
 
 # ── Git safe directory ────────────────────────────────────────────────────────
 su -c "git config --global safe.directory /workspace" coder

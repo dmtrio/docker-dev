@@ -81,7 +81,7 @@ class WireError(Exception):
 def _write_atomic(path, text, mode=None, errors=None):
     """Write text to path via tmp + rename; chmod the tmp BEFORE the rename so
     the final path never exists with looser permissions. mode=None keeps the
-    umask default (e.g. the repo's .mcp.json, which holds ${VAR} refs, not
+    umask default (e.g. repos/.mcp.json, which holds ${VAR} refs, not
     secrets)."""
     tmp = path.parent / (path.name + ".tmp")
     # newline="": no newline translation — what we assembled is what lands.
@@ -170,25 +170,25 @@ def _load_servers(path):
 
 
 def generate_claude_mcp(workspace, claude_servers, plugins):
-    """Regenerate <workspace>/main/.mcp.json from the claude-bound agent servers
-    + plugins — unless the repo ships its own (no marker file), or there is no
-    repo yet. claude_servers is {name: spec} for agent-scoped servers this
-    container binds to claude (obsidian etc.), rendered ahead of the ordinary
-    plugins. Claude expands the ${VAR} header refs at launch via the shims, so
-    this file carries no literal secrets."""
-    main_dir = workspace / "main"
-    mcp_path = main_dir / ".mcp.json"
+    """Regenerate <workspace>/repos/.mcp.json from the claude-bound agent servers
+    + plugins — unless the workspace ships its own (no marker file), or repos/
+    does not exist yet. claude_servers is {name: spec} for agent-scoped servers
+    this container binds to claude (obsidian etc.), rendered ahead of the
+    ordinary plugins. Claude expands the ${VAR} header refs at launch via the
+    shims, so this file carries no literal secrets."""
+    repos_dir = workspace / "repos"
+    mcp_path = repos_dir / ".mcp.json"
     marker = workspace / ".mcp.generated"
 
-    # Gate on the repo (.git), not just the dir: the entrypoint always creates
-    # an empty main/ so editors can attach, but on a failed private-repo clone
-    # it stays empty and .git-less. Writing .mcp.json there would make the dir
-    # non-empty and break the clone retry on the next up.sh run — so skip.
-    if not (main_dir / ".git").is_dir():
-        print(f"  (skipping .mcp.json — {main_dir} has no repo yet; fix the clone and rerun up.sh)")
+    # Gate on repos/ existing: the canonical file lives in this container-owned
+    # dir (not inside a clone target), so the failed-clone concern is gone —
+    # clones land in repos/<name>/; a file in repos/ itself cannot break a
+    # clone retry.
+    if not repos_dir.is_dir():
+        print(f"  (skipping .mcp.json — {repos_dir} does not exist yet; rerun up.sh)")
         return
     if mcp_path.is_file() and not marker.is_file():
-        print("  (repo ships its own .mcp.json — leaving it alone; manifest plugins are NOT merged into it)")
+        print("  (workspace ships its own .mcp.json — leaving it alone; manifest plugins are NOT merged into it)")
         return
 
     # Agent-scoped servers bound to claude first (ref form), then ordinary
@@ -203,40 +203,89 @@ def generate_claude_mcp(workspace, claude_servers, plugins):
     print("  ✓ .mcp.json generated (" + ", ".join(sorted(servers)) + ")")
 
 
+def link_repo_mcp(workspace):
+    """Point each repos/<name>/.mcp.json at the workspace-level canonical file
+    via a relative symlink. Claude Code only reads .mcp.json from its start
+    directory, so every clone needs one; repos/.mcp.json is the single source
+    (generated or hand-authored). A repo that ships its own regular file is
+    left alone."""
+    repos_dir = workspace / "repos"
+    mcp_path = repos_dir / ".mcp.json"
+    # Symlinks are correct whether the canonical file is generated or
+    # hand-authored; absent entirely → nothing to point at.
+    if not mcp_path.is_file():
+        return
+    for child in sorted(p for p in repos_dir.iterdir() if p.is_dir()):
+        if not (child / ".git").is_dir():
+            continue
+        link = child / ".mcp.json"
+        if link.is_symlink():
+            if os.readlink(link) != "../.mcp.json":
+                link.unlink()
+                link.symlink_to("../.mcp.json")
+        elif link.is_file():
+            print(f"  (repo {child.name} ships its own .mcp.json — leaving it alone)")
+        elif not link.exists():
+            link.symlink_to("../.mcp.json")
+
+
 def preapprove_claude(home, workspace):
     """Approval state lives in ~/.claude.json; since .mcp.json came from the
     manifest, its servers are approved by construction. Merge, don't clobber.
 
-    .mcp.json may be repo-shipped rather than generated (that's a supported
-    opt-out), so a shape we don't understand is a skip-with-warning, not an
-    abort — the other agents' wiring must not die on a file we promised to
-    leave alone. ~/.claude.json itself failing to parse IS an abort: merging
-    into a corrupt state file can only destroy it."""
-    mcp_path = workspace / "main" / ".mcp.json"
-    if not mcp_path.is_file():
+    Approval is per project path: repos/ itself (canonical .mcp.json) plus each
+    cloned repos/<name>. .mcp.json may be workspace-shipped or per-repo rather
+    than generated (supported opt-outs), so a shape we don't understand is a
+    skip-with-warning for that dir, not an abort — the other dirs and agents'
+    wiring must not die on a file we promised to leave alone. ~/.claude.json
+    itself failing to parse IS an abort: merging into a corrupt state file can
+    only destroy it."""
+    repos_dir = workspace / "repos"
+    if not repos_dir.is_dir():
         return
-    try:
-        mcp = _load_json_file(mcp_path)
-    except WireError as e:
-        print(f"  ⚠ skipping claude pre-approval — {e}")
-        return
-    if not isinstance(mcp, dict) or not isinstance(mcp.get("mcpServers"), dict):
-        print(f"  ⚠ skipping claude pre-approval — {mcp_path} has no mcpServers object")
-        return
-    servers = sorted(mcp["mcpServers"])
+
+    project_dirs = [repos_dir]
+    for child in sorted(p for p in repos_dir.iterdir() if p.is_dir()):
+        if (child / ".git").is_dir():
+            project_dirs.append(child)
 
     cj = home / ".claude.json"
-    state = _load_json_file(cj) if cj.is_file() else {}
-    if not isinstance(state, dict):
-        raise WireError(f"{cj} is not a JSON object")
-    projects = state.setdefault("projects", {})
-    if not isinstance(projects, dict):
-        raise WireError(f"{cj}: .projects is not an object")
-    project = projects.setdefault(str(workspace / "main"), {})
-    if not isinstance(project, dict):
-        raise WireError(f"{cj}: .projects[…] is not an object")
-    project["enabledMcpjsonServers"] = servers
-    project["hasTrustDialogAccepted"] = True
+    state = None
+    projects = None
+    approved = []
+
+    for project_dir in project_dirs:
+        mcp_path = project_dir / ".mcp.json"
+        # Follow the symlink; for repos/ itself this is the canonical file.
+        if not mcp_path.is_file():
+            continue
+        try:
+            mcp = _load_json_file(mcp_path)
+        except WireError as e:
+            print(f"  ⚠ skipping claude pre-approval — {e}")
+            continue
+        if not isinstance(mcp, dict) or not isinstance(mcp.get("mcpServers"), dict):
+            print(f"  ⚠ skipping claude pre-approval — {mcp_path} has no mcpServers object")
+            continue
+        servers = sorted(mcp["mcpServers"])
+
+        if state is None:
+            state = _load_json_file(cj) if cj.is_file() else {}
+            if not isinstance(state, dict):
+                raise WireError(f"{cj} is not a JSON object")
+            projects = state.setdefault("projects", {})
+            if not isinstance(projects, dict):
+                raise WireError(f"{cj}: .projects is not an object")
+
+        project = projects.setdefault(str(project_dir), {})
+        if not isinstance(project, dict):
+            raise WireError(f"{cj}: .projects[…] is not an object")
+        project["enabledMcpjsonServers"] = servers
+        project["hasTrustDialogAccepted"] = True
+        approved.extend(servers)
+
+    if state is None:
+        return
 
     # Write THROUGH rather than tmp+rename: the file predates this module and
     # may be a symlink (dotfiles) — a rename would swap in a detached regular
@@ -244,7 +293,7 @@ def preapprove_claude(home, workspace):
     # inode, mode, and link target all preserved.
     with open(cj, "w", encoding="utf-8") as f:
         f.write(_dump_json(state))
-    print("  ✓ MCP servers pre-approved for claude (" + ", ".join(servers) + ")")
+    print("  ✓ MCP servers pre-approved for claude (" + ", ".join(sorted(set(approved))) + ")")
 
 
 def _merge_named_entry(path, name, entry):
@@ -407,6 +456,7 @@ def run(payload, home, workspace, env):
     claude_servers = {s["name"]: _claude_server(s["spec"])
                       for s in agent_servers if s.get("claude")}
     generate_claude_mcp(workspace, claude_servers, plugins)
+    link_repo_mcp(workspace)
     preapprove_claude(home, workspace)
 
     # Per-agent wiring of agent-scoped servers (literal key for cursor/gemini/pi,
