@@ -64,6 +64,14 @@ SECRET_KEY_VARS=""
 for v in $(compgen -v | grep -E '^OBSIDIAN_(WATCH_)?KEY_' || true); do
     if [ -n "${!v}" ]; then SECRET_KEY_VARS="${SECRET_KEY_VARS:+$SECRET_KEY_VARS }$v"; fi
 done
+# The set of GH_TOKEN* var names present in secrets.env (NAMES only — values
+# stay on the host). manifest.py validates every git.token / git.orgs.*.token
+# against this list, hard-failing a manifest that names a token var that isn't
+# set rather than silently falling back to the wrong identity.
+GH_TOKEN_VARS=""
+for v in $(compgen -v | grep -E '^GH_TOKEN' || true); do
+    if [ -n "${!v}" ]; then GH_TOKEN_VARS="${GH_TOKEN_VARS:+$GH_TOKEN_VARS }$v"; fi
+done
 DERIVED=$(
     {
         yq -o=json -I=0 "$MANIFEST"
@@ -78,13 +86,21 @@ DERIVED=$(
                 && [ "$(printf '%s\n' "$DOC" | wc -l)" -eq 1 ] || DOC='!'
             printf '%s\t%s\n' "$(basename "$(dirname "$f")")" "$DOC"
         done
-    } | SECRET_KEY_VARS="$SECRET_KEY_VARS" SECRETS_FILE="$SECRETS_FILE" \
+    } | SECRET_KEY_VARS="$SECRET_KEY_VARS" GH_TOKEN_VARS="$GH_TOKEN_VARS" \
+        SECRETS_FILE="$SECRETS_FILE" \
         GIT_NAME_DEFAULT="$(git config --global user.name 2>/dev/null || true)" \
         GIT_EMAIL_DEFAULT="$(git config --global user.email 2>/dev/null || true)" \
         NTFY_URL="${NTFY_URL:-}" NTFY_TOPIC="${NTFY_TOPIC:-}" \
         "$PYTHON3" "$SCRIPT_DIR/src/manifest.py" --derive
 )
 eval "$DERIVED"
+
+# Resolve the container's default git token from the manifest's git.token (a
+# secrets.env var NAME; manifest.py already checked it is set). Absent → keep
+# GH_TOKEN as sourced from secrets.env, so manifests with no git.token keep the
+# global machine-user token (backward compatible). This GH_TOKEN is what
+# keyfiles.sh fans into every <agent>.env and the clone bootstrap hands to git.
+if [ -n "$GIT_TOKEN_SOURCE" ]; then GH_TOKEN="${!GIT_TOKEN_SOURCE}"; fi
 
 COMPOSE_FILES="-f $SCRIPT_DIR/compose/docker-compose.local.yml"
 [ -n "$SSH_PORT" ] && COMPOSE_FILES="$COMPOSE_FILES -f $SCRIPT_DIR/compose/docker-compose.ssh.yml"
@@ -104,7 +120,7 @@ rm -f "$KEYS_PATH"/*.env
 # value lookups happen against the secrets.env this shell already sourced.
 SHIM_AGENTS="claude pi gemini cursor-agent codex"
 . "$SCRIPT_DIR/src/keyfiles.sh"
-write_keyfiles "$KEYS_PATH" "$SHIM_AGENTS" "$PLUGIN_ENV_SECRETS" "$AGENT_SECRETS"
+write_keyfiles "$KEYS_PATH" "$SHIM_AGENTS" "$PLUGIN_ENV_SECRETS" "$AGENT_SECRETS" "$GIT_ORG_TOKENS"
 
 # ── Host paths + platform ─────────────────────────────────────────────────────
 ARTIFACTS_PATH="$BASE_PATH/artifacts/$NAME"
@@ -260,16 +276,44 @@ if docker exec -u coder "dev-agent-$NAME" bash -c '[ -e /workspace/main ]'; then
 fi
 
 if [ -n "$REPOS" ]; then
-    # The bootstrap exec isn't shim-launched, so hand it the machine-user
-    # token explicitly for private-repo clones over HTTPS. Name and URL ride
-    # as env vars — never spliced into the bash -c string.
+    # The bootstrap exec isn't shim-launched, so hand it the git tokens
+    # explicitly for private-repo clones over HTTPS. git-credential-org (the
+    # in-container helper) routes by owner, so it needs BOTH the default
+    # GH_TOKEN and every per-org GH_TOKEN_<owner> in scope — otherwise a repo
+    # owned by an org the default token can't reach would clone with the wrong
+    # token and 404 (the exact failure this feature fixes). Tokens carry no
+    # whitespace, so the unquoted -e assembly is safe. Name and URL ride as env
+    # vars too — never spliced into the bash -c string.
     CLONE_ENV=""
     [ -n "${GH_TOKEN:-}" ] && CLONE_ENV="-e GH_TOKEN=$GH_TOKEN"
+    while IFS=$'\t' read -r _owner _canon _src; do
+        [ -n "$_owner" ] || continue
+        CLONE_ENV="$CLONE_ENV -e $_canon=${!_src}"
+    done <<EOF
+$GIT_ORG_TOKENS
+EOF
     while IFS=$'\t' read -r RNAME RURL; do
         [ -n "$RNAME" ] || continue
         docker exec $CLONE_ENV -e "REPO_NAME=$RNAME" -e "REPO_URL=$RURL" -u coder "dev-agent-$NAME" bash -c \
             '[ -d "/workspace/repos/$REPO_NAME/.git" ] || git clone "$REPO_URL" "/workspace/repos/$REPO_NAME"' \
             || echo "WARNING: clone of '$RNAME' failed — private repo needs either GH_TOKEN in secrets.env (machine user must have repo access) or a one-time 'gh auth login' in the container"
+        # Per-repo identity attribution: if this repo's OWNER has a git.orgs
+        # override with a name/email, stamp it as the repo-local user.name/email
+        # so commits to that owner's repos carry the right identity. Repos whose
+        # owner has no override inherit the container-global identity from
+        # entrypoint.sh. Owner = first path segment of the URL, for both
+        # https://host/owner/repo and git@host:owner/repo (and creds@host) forms.
+        REPO_OWNER="${RURL#*://}"; REPO_OWNER="${REPO_OWNER#*@}"
+        REPO_OWNER="${REPO_OWNER#*[:/]}"; REPO_OWNER="${REPO_OWNER%%/*}"
+        IDENT=$(printf '%s' "$GIT_ORG_IDENTITIES" | awk -F'\t' -v o="$REPO_OWNER" '$1==o{print $2"\t"$3; exit}')
+        ID_NAME="${IDENT%%$'\t'*}"; ID_EMAIL="${IDENT#*$'\t'}"
+        if [ -n "$ID_NAME" ] || [ -n "$ID_EMAIL" ]; then
+            docker exec -e "REPO_NAME=$RNAME" -e "ID_NAME=$ID_NAME" -e "ID_EMAIL=$ID_EMAIL" -u coder "dev-agent-$NAME" bash -c '
+                d="/workspace/repos/$REPO_NAME"; [ -d "$d/.git" ] || exit 0
+                [ -n "$ID_NAME" ]  && git -C "$d" config user.name  "$ID_NAME"
+                [ -n "$ID_EMAIL" ] && git -C "$d" config user.email "$ID_EMAIL"
+                :' || true
+        fi
     done <<EOF
 $REPOS
 EOF

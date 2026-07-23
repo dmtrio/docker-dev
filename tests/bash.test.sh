@@ -83,6 +83,67 @@ sourced=$(env -i bash -c 'set -a; . "$1"; set +a; echo "$FOO"' _ "$d/claude.env"
 assert_eq "agent-scoped overrides shared on source (last wins)" "agentval" "$sourced"
 unset FOO BAR
 
+# per-org tokens (GIT_ORG_TOKENS) fan into the shared block as GH_TOKEN_<owner>,
+# alongside the default GH_TOKEN, on every shim agent — this is what
+# git-credential-org reads to route by owner.
+d="$WORK/ck4"; mkdir -p "$d"; chmod 700 "$d"
+GH_TOKEN=defval SRC_VENDOR=vtok SRC_ACME=atok
+GOT=$(printf 'vendor\tGH_TOKEN_vendor\tSRC_VENDOR\nacme-corp\tGH_TOKEN_acme_corp\tSRC_ACME\n')
+write_keyfiles "$d" "$SHIM" "" "" "$GOT" >/dev/null
+assert_eq "per-org tokens land next to GH_TOKEN on each agent" \
+    $'GH_TOKEN=defval\nGH_TOKEN_vendor=vtok\nGH_TOKEN_acme_corp=atok' "$(cat "$d/gemini.env")"
+assert_eq "per-org fan-out reaches every shim agent" \
+    $'GH_TOKEN=defval\nGH_TOKEN_vendor=vtok\nGH_TOKEN_acme_corp=atok' "$(cat "$d/cursor-agent.env")"
+unset GH_TOKEN SRC_VENDOR SRC_ACME
+
+# no orgs (empty / omitted git_org_tokens) → only GH_TOKEN, no regression
+d="$WORK/ck5"; mkdir -p "$d"; chmod 700 "$d"
+GH_TOKEN=defval
+write_keyfiles "$d" "claude" "" "" "" >/dev/null
+assert_eq "no orgs writes only GH_TOKEN (5th arg empty)" "GH_TOKEN=defval" "$(cat "$d/claude.env")"
+write_keyfiles "$d" "claude" "" "" >/dev/null   # 5th arg omitted entirely
+assert_eq "no orgs writes only GH_TOKEN (5th arg omitted)" "GH_TOKEN=defval" "$(cat "$d/claude.env")"
+unset GH_TOKEN
+
+# ────────────────────────────────────────────────────────────────────────────
+echo "── src/git-credential-org.sh ──"
+# The in-container credential router: `get` on stdin (protocol/host/path),
+# first path segment = owner, return GH_TOKEN_<owner> → GH_TOKEN → gh fallback.
+# useHttpPath=true is what gives it the path line. Run the real script.
+HELPER="$REPO/src/git-credential-org.sh"
+cred() { printf 'protocol=https\nhost=github.com\npath=%s\n' "$1" | env "${@:2}" bash "$HELPER" get; }
+
+out=$(cred vendor/lib.git GH_TOKEN_vendor=vtok GH_TOKEN=defval)
+assert_contains "known owner → its per-org token" "$out" "password=vtok"
+assert_contains "per-org token uses x-access-token username" "$out" "username=x-access-token"
+assert_absent "per-org token is not the default" "$out" "password=defval"
+
+out=$(cred other/repo.git GH_TOKEN=defval)   # no GH_TOKEN_other set
+assert_contains "unknown owner → default GH_TOKEN" "$out" "password=defval"
+
+# owner sanitization parity with manifest.py:_canonical_token_var (- → _):
+# acme-corp reads GH_TOKEN_acme_corp, not GH_TOKEN_acme-corp.
+out=$(cred acme-corp/thing.git GH_TOKEN_acme_corp=atok GH_TOKEN=defval)
+assert_contains "hyphenated owner sanitized to GH_TOKEN_acme_corp" "$out" "password=atok"
+
+# neither the per-org nor the default token set → defer to gh (human login).
+# Mock gh so the fallback is deterministic and offline.
+mkdir -p "$WORK/ghbin"
+cat > "$WORK/ghbin/gh" <<'MOCK'
+#!/bin/bash
+# gh auth git-credential get: echo a fixed human credential.
+[ "$1" = auth ] && { echo "username=human"; echo "password=humantok"; exit 0; }
+exit 1
+MOCK
+chmod +x "$WORK/ghbin/gh"
+out=$(printf 'protocol=https\nhost=github.com\npath=nobody/x.git\n' | env -i PATH="$WORK/ghbin:$PATH" bash "$HELPER" get)
+assert_contains "no token set → falls back to gh credential" "$out" "password=humantok"
+
+# store/erase are no-ops (stateless helper) — no output, clean exit.
+out=$(printf 'protocol=https\nhost=github.com\npath=vendor/lib.git\n' | GH_TOKEN_vendor=vtok bash "$HELPER" store); rc=$?
+assert_rc "store is a no-op (rc 0)" 0 "$rc"
+assert_eq "store produces no output" "" "$out"
+
 # ────────────────────────────────────────────────────────────────────────────
 echo "── common.sh ──"
 # Copy it out so CDD_ROOT is our temp dir (not the repo, whose ./.env we must

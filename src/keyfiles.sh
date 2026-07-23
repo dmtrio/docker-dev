@@ -16,15 +16,16 @@
 
 warn_missing() { echo "  ⚠ $1 not in secrets.env — $2 will not authenticate until set"; }
 
-# write_keyfiles <keys_dir> <shim_agents> <plugin_env_secrets> <agent_secrets>
+# write_keyfiles <keys_dir> <shim_agents> <plugin_env_secrets> <agent_secrets> [<git_org_tokens>]
 #   keys_dir            already exists, mode 700, wiped of *.env by the caller
 #   shim_agents         space-separated agent names (match the Dockerfile shims)
 #   plugin_env_secrets  SLOT<TAB>SOURCE<TAB>HINT per line (env-scoped, from manifest.py)
 #   agent_secrets       AGENT<TAB>SLOT<TAB>SOURCE per line (agent-scoped, from manifest.py)
+#   git_org_tokens      OWNER<TAB>CANONICAL<TAB>SOURCE per line (per-org, from manifest.py)
 # Reads GH_TOKEN and every SOURCE var from the environment (indirect expansion).
 write_keyfiles() {
-    local keys_dir="$1" shim_agents="$2" plugin_env_secrets="$3" agent_secrets="$4"
-    local shared="" slot src hint agent a f
+    local keys_dir="$1" shim_agents="$2" plugin_env_secrets="$3" agent_secrets="$4" git_org_tokens="${5:-}"
+    local shared="" slot src hint agent a f owner canonical
 
     # Shared block: env-scoped plugin secrets + GH_TOKEN, built once. The
     # heredoc keeps the loop in this shell so the warns aren't lost to a pipe
@@ -40,6 +41,17 @@ write_keyfiles() {
 $plugin_env_secrets
 EOF
     [ -n "${GH_TOKEN:-}" ] && shared="${shared}GH_TOKEN=$GH_TOKEN"$'\n'
+
+    # Per-org tokens sit in the shared block alongside GH_TOKEN, one canonical
+    # GH_TOKEN_<owner>=<value> per line, so git-credential-org can route by
+    # owner. No warn_missing: a per-org source var absent from secrets.env is a
+    # hard error in manifest.py (like agent_secrets), so it can't reach here.
+    while IFS=$'\t' read -r owner canonical src; do
+        [ -n "$owner" ] || continue
+        shared="${shared}${canonical}=${!src}"$'\n'
+    done <<EOF
+$git_org_tokens
+EOF
 
     # Fan the shared block out to every shim agent. chmod 600 as each file is
     # created — it already holds secret values, so don't leave it at the umask
