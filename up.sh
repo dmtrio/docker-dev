@@ -305,6 +305,10 @@ EOF
         # https://host/owner/repo and git@host:owner/repo (and creds@host) forms.
         REPO_OWNER="${RURL#*://}"; REPO_OWNER="${REPO_OWNER#*@}"
         REPO_OWNER="${REPO_OWNER#*[:/]}"; REPO_OWNER="${REPO_OWNER%%/*}"
+        # case-fold to match GIT_ORG_IDENTITIES (lowercased owners). tr, not
+        # ${VAR,,}: up.sh runs on the host, and macOS ships bash 3.2 where that
+        # expansion is a syntax error.
+        REPO_OWNER=$(printf '%s' "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
         IDENT=$(printf '%s' "$GIT_ORG_IDENTITIES" | awk -F'\t' -v o="$REPO_OWNER" '$1==o{print $2"\t"$3; exit}')
         ID_NAME="${IDENT%%$'\t'*}"; ID_EMAIL="${IDENT#*$'\t'}"
         if [ -n "$ID_NAME" ] || [ -n "$ID_EMAIL" ]; then

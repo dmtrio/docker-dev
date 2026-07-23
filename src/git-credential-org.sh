@@ -9,9 +9,11 @@
 # one credential lane serves agents (token by owner) AND humans (gh fallback).
 #
 # The <owner> → GH_TOKEN_<owner> sanitization MUST match
-# manifest.py:_canonical_token_var byte-for-byte: GH_TOKEN_ + every
-# non-alphanumeric byte replaced by '_'. A mismatch silently mis-routes to the
-# default token — the exact bug this feature exists to prevent.
+# manifest.py:_canonical_token_var byte-for-byte: lowercase the owner (github
+# owners are case-insensitive; the owner here comes from the clone URL, whose
+# case we don't control), then GH_TOKEN_ + every non-alphanumeric byte replaced
+# by '_'. A mismatch silently mis-routes to the default token — the exact bug
+# this feature exists to prevent.
 #
 # Forge is github-only for now (entrypoint installs this helper only for
 # https://github.com). gitea is a follow-up.
@@ -21,7 +23,11 @@
 req=$(cat)                                # buffer the request so gh can replay it
 path=$(printf '%s\n' "$req" | sed -n 's/^path=//p')
 owner=${path%%/*}
-clean=${owner//[!A-Za-z0-9]/_}           # parity with _canonical_token_var
+# case-fold (github owners are case-insensitive), then sanitize. tr, not
+# ${owner,,}: this helper is also exercised on the host by the test suite, and
+# macOS ships bash 3.2 where that expansion is a syntax error.
+owner=$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')
+clean=${owner//[!a-z0-9]/_}              # parity with _canonical_token_var
 var="GH_TOKEN_${clean}"
 tok="${!var:-${GH_TOKEN:-}}"
 

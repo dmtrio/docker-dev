@@ -386,6 +386,25 @@ class TestGitIdentity(unittest.TestCase):
         self.assertEqual(d["GIT_ORG_TOKENS"], "acme-corp\tGH_TOKEN_acme_corp\tGH_TOKEN_v2\n")
         self.assertEqual(d["GIT_ORG_IDENTITIES"], "acme-corp\t\t\n")
 
+    def test_mixed_case_owner_folds_to_lowercase(self):
+        # github owners are case-insensitive; the router derives the owner from
+        # the clone URL, so the emitted owner + canonical var fold to lowercase
+        # (a `PlanetExpress` manifest key must route a `planetexpress/*` clone).
+        d = self._d({"orgs": {"PlanetExpress": {"token": "GH_TOKEN_v2",
+                                                "name": "Leela Bot"}}})
+        self.assertEqual(d["GIT_ORG_TOKENS"],
+                         "planetexpress\tGH_TOKEN_planetexpress\tGH_TOKEN_v2\n")
+        self.assertEqual(d["GIT_ORG_IDENTITIES"], "planetexpress\tLeela Bot\t\n")
+
+    def test_case_insensitive_duplicate_owner_hard_fails(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"orgs": {"Acme": {"token": "GH_TOKEN_v2"},
+                              "acme": {"token": "GH_TOKEN_vendor"}}})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest git identity failed validation:\n"
+            "  git.orgs: duplicate owner 'acme' (case-insensitive clash with 'Acme')")
+
     def test_org_missing_token_hard_fails(self):
         with self.assertRaises(m.ManifestError) as cm:
             self._d({"orgs": {"vendor": {"name": "Bot"}}})

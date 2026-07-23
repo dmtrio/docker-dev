@@ -216,9 +216,12 @@ def _parse_secret(val, plugin, slot):
 def _canonical_token_var(owner):
     """The in-container env var a per-org token lands in — keyfiles.sh writes it,
     git-credential-org.sh reads it. This derivation MUST match the shell one in
-    that helper byte-for-byte: GH_TOKEN_ + every non-alphanumeric replaced by _.
-    (OWNER_RE admits only alphanumerics and '-', so this is injective.)"""
-    return "GH_TOKEN_" + re.sub(r"[^A-Za-z0-9]", "_", owner)
+    that helper byte-for-byte: lowercase the owner (github owners are
+    case-insensitive, and the router derives the owner from the clone URL, whose
+    case we don't control), then GH_TOKEN_ + every non-alphanumeric replaced by
+    _. Case-folding means two owners differing only in case would collide on one
+    var, so _git_identity rejects case-insensitive duplicate owners upstream."""
+    return "GH_TOKEN_" + re.sub(r"[^A-Za-z0-9]", "_", owner.lower())
 
 
 def _git_identity(git, env, secrets_file):
@@ -229,7 +232,9 @@ def _git_identity(git, env, secrets_file):
     (GH_TOKEN_VARS lists the ones up.sh scanned) is a hard error — never a silent
     fall-back to the wrong identity, which is the whole reason this exists.
 
-    Emits:
+    Emits (owner is lowercased — github owners are case-insensitive and the
+    router/attribution match against the clone URL's owner, whose case we don't
+    control, so both sides fold to lowercase):
       GIT_TOKEN_SOURCE     default token's source var name ("" = keep global GH_TOKEN)
       GIT_ORG_TOKENS       owner<TAB>canonical_var<TAB>source_var per line
       GIT_ORG_IDENTITIES   owner<TAB>name<TAB>email per line
@@ -254,7 +259,8 @@ def _git_identity(git, env, secrets_file):
     default_source = source(git.get("token"), "git.token", required=False)
 
     orgs = git.get("orgs")
-    records = []  # (owner, canonical_var, source_var, name, email)
+    records = []  # (owner_lc, canonical_var, source_var, name, email)
+    seen_owners = {}  # lowercased owner → the manifest key that claimed it
     if not _falsy(orgs):
         if not isinstance(orgs, dict):
             errors.append("  git.orgs: must be a map of <owner>: {token, name, email}")
@@ -264,6 +270,16 @@ def _git_identity(git, env, secrets_file):
             if not isinstance(owner, str) or not OWNER_RE.match(owner):
                 errors.append(f"  git.orgs: illegal owner '{owner}' (a forge org/user name)")
                 continue
+            # Owners are case-insensitive (routing folds to lowercase), so two
+            # keys differing only in case would map to one token var — an
+            # ambiguity, not a valid config. Reject it instead of silently
+            # letting the last one win.
+            owner_lc = owner.lower()
+            if owner_lc in seen_owners:
+                errors.append(f"  git.orgs: duplicate owner '{owner}' "
+                              f"(case-insensitive clash with '{seen_owners[owner_lc]}')")
+                continue
+            seen_owners[owner_lc] = owner
             if _falsy(spec):
                 spec = {}
             if not isinstance(spec, dict):
@@ -276,7 +292,7 @@ def _git_identity(git, env, secrets_file):
             src = source(spec.get("token"), f"{field}.token", required=True)
             if not src:
                 continue
-            records.append((owner, _canonical_token_var(owner), src,
+            records.append((owner_lc, _canonical_token_var(owner), src,
                             _scalar(spec.get("name"), f"{field}.name"),
                             _scalar(spec.get("email"), f"{field}.email")))
 
