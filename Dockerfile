@@ -240,6 +240,11 @@ RUN chmod 644 /usr/local/lib/dev-agent/wire_plugins.py
 COPY src/compose_rules.py /usr/local/lib/dev-agent/compose_rules.py
 RUN chmod 644 /usr/local/lib/dev-agent/compose_rules.py
 
+# Merges the manifest's repo list into /workspace/dev.code-workspace on every
+# `up` (idempotent — preserves agent-managed worktree entries; layout v2).
+COPY src/code_workspace.py /usr/local/lib/dev-agent/code_workspace.py
+RUN chmod 644 /usr/local/lib/dev-agent/code_workspace.py
+
 ENV SSH_ENABLED=false
 
 # ── Remote session tools: tmux + mosh (RFC 04) ───────────────────────────────

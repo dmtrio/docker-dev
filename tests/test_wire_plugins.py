@@ -75,13 +75,11 @@ class TestMergePluginEntries(unittest.TestCase):
 class TestGenerateClaudeMcp(QuietTestCase):
     """Tests for generate_claude_mcp function."""
 
-    def test_no_git_directory_skips_generation(self):
-        """No workspace/main/.git → prints skip message, writes nothing."""
+    def test_no_repos_directory_skips_generation(self):
+        """No workspace/repos/ → prints skip message, writes nothing."""
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            main_dir = workspace / "main"
-            main_dir.mkdir()
-            mcp_path = main_dir / ".mcp.json"
+            mcp_path = workspace / "repos" / ".mcp.json"
             marker = workspace / ".mcp.generated"
 
             output = io.StringIO()
@@ -89,17 +87,17 @@ class TestGenerateClaudeMcp(QuietTestCase):
                 wire_plugins.generate_claude_mcp(workspace, {}, {})
 
             self.assertIn("skipping .mcp.json", output.getvalue())
+            self.assertIn("does not exist yet", output.getvalue())
             self.assertFalse(mcp_path.exists())
             self.assertFalse(marker.exists())
 
     def test_existing_mcp_json_without_marker_left_untouched(self):
-        """Repo ships its own .mcp.json (no marker) → file left byte-identical."""
+        """Workspace ships its own repos/.mcp.json (no marker) → left byte-identical."""
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            main_dir = workspace / "main"
-            main_dir.mkdir()
-            (main_dir / ".git").mkdir()
-            mcp_path = main_dir / ".mcp.json"
+            repos_dir = workspace / "repos"
+            repos_dir.mkdir()
+            mcp_path = repos_dir / ".mcp.json"
             original_content = '{"custom": "config"}\n'
             mcp_path.write_text(original_content)
 
@@ -109,7 +107,7 @@ class TestGenerateClaudeMcp(QuietTestCase):
 
             self.assertEqual(mcp_path.read_text(), original_content)
             self.assertFalse((workspace / ".mcp.generated").exists())
-            self.assertIn("repo ships its own .mcp.json", output.getvalue())
+            self.assertIn("workspace ships its own .mcp.json", output.getvalue())
 
     def test_fresh_generation_claude_servers_plus_local_and_remote_plugins(self):
         """Fresh generation: claude-bound agent server first, then a local
@@ -117,10 +115,9 @@ class TestGenerateClaudeMcp(QuietTestCase):
         Marker created, idempotent."""
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            main_dir = workspace / "main"
-            main_dir.mkdir()
-            (main_dir / ".git").mkdir()
-            mcp_path = main_dir / ".mcp.json"
+            repos_dir = workspace / "repos"
+            repos_dir.mkdir()
+            mcp_path = repos_dir / ".mcp.json"
             marker = workspace / ".mcp.generated"
 
             # claude_servers are already in claude form (ref headers, type: http).
@@ -161,15 +158,105 @@ class TestGenerateClaudeMcp(QuietTestCase):
         """No claude servers, no plugins → writes empty mcpServers."""
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            main_dir = workspace / "main"
-            main_dir.mkdir()
-            (main_dir / ".git").mkdir()
-            mcp_path = main_dir / ".mcp.json"
+            repos_dir = workspace / "repos"
+            repos_dir.mkdir()
+            mcp_path = repos_dir / ".mcp.json"
 
             wire_plugins.generate_claude_mcp(workspace, {}, {})
 
             data = json.loads(mcp_path.read_text())
             self.assertEqual(data["mcpServers"], {})
+
+
+class TestLinkRepoMcp(QuietTestCase):
+    """Tests for link_repo_mcp — relative symlinks from each clone to the
+    workspace-level canonical repos/.mcp.json."""
+
+    def test_symlink_created_for_repo_with_git(self):
+        """Repo dir with .git → relative symlink to ../.mcp.json."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            repos = workspace / "repos"
+            repos.mkdir()
+            (repos / ".mcp.json").write_text('{"mcpServers": {}}\n')
+            repo = repos / "alpha"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+
+            wire_plugins.link_repo_mcp(workspace)
+
+            link = repo / ".mcp.json"
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(os.readlink(link), "../.mcp.json")
+
+    def test_no_symlink_for_dir_without_git(self):
+        """Child dir without .git → no .mcp.json symlink."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            repos = workspace / "repos"
+            repos.mkdir()
+            (repos / ".mcp.json").write_text('{"mcpServers": {}}\n')
+            (repos / "not-a-repo").mkdir()
+
+            wire_plugins.link_repo_mcp(workspace)
+
+            self.assertFalse((repos / "not-a-repo" / ".mcp.json").exists())
+
+    def test_repo_shipped_regular_file_left_alone(self):
+        """Repo ships its own regular .mcp.json → left alone with message."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            repos = workspace / "repos"
+            repos.mkdir()
+            (repos / ".mcp.json").write_text('{"mcpServers": {"canonical": {}}}\n')
+            repo = repos / "beta"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            shipped = '{"mcpServers": {"shipped": {}}}\n'
+            (repo / ".mcp.json").write_text(shipped)
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                wire_plugins.link_repo_mcp(workspace)
+
+            self.assertFalse((repo / ".mcp.json").is_symlink())
+            self.assertEqual((repo / ".mcp.json").read_text(), shipped)
+            self.assertIn("repo beta ships its own .mcp.json", output.getvalue())
+
+    def test_wrong_target_symlink_repointed(self):
+        """Existing symlink with a different target → repointed to ../.mcp.json."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            repos = workspace / "repos"
+            repos.mkdir()
+            (repos / ".mcp.json").write_text('{"mcpServers": {}}\n')
+            repo = repos / "gamma"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            (repo / ".mcp.json").symlink_to("/somewhere/else/.mcp.json")
+
+            wire_plugins.link_repo_mcp(workspace)
+
+            link = repo / ".mcp.json"
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(os.readlink(link), "../.mcp.json")
+
+    def test_no_canonical_mcp_json_is_silent_noop(self):
+        """No repos/.mcp.json → silent return, no links created."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            repos = workspace / "repos"
+            repos.mkdir()
+            repo = repos / "alpha"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                wire_plugins.link_repo_mcp(workspace)
+
+            self.assertEqual(output.getvalue(), "")
+            self.assertFalse((repo / ".mcp.json").exists())
 
 
 class TestPreapproveClaude(QuietTestCase):
@@ -181,7 +268,7 @@ class TestPreapproveClaude(QuietTestCase):
             home = Path(tmp)
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
-            (workspace / "main").mkdir()
+            (workspace / "repos").mkdir()
 
             wire_plugins.preapprove_claude(home, workspace)
 
@@ -193,9 +280,9 @@ class TestPreapproveClaude(QuietTestCase):
             home = Path(tmp)
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
-            main_dir = workspace / "main"
-            main_dir.mkdir()
-            mcp_path = main_dir / ".mcp.json"
+            repos_dir = workspace / "repos"
+            repos_dir.mkdir()
+            mcp_path = repos_dir / ".mcp.json"
             mcp_path.write_text('{"mcpServers": {"coding": {}, "obsidian-annotated": {}}}')
 
             wire_plugins.preapprove_claude(home, workspace)
@@ -203,7 +290,7 @@ class TestPreapproveClaude(QuietTestCase):
             cj = home / ".claude.json"
             self.assertTrue(cj.exists())
             data = json.loads(cj.read_text())
-            proj_key = str(workspace / "main")
+            proj_key = str(repos_dir)
             self.assertIn(proj_key, data["projects"])
             self.assertEqual(
                 sorted(data["projects"][proj_key]["enabledMcpjsonServers"]),
@@ -211,22 +298,61 @@ class TestPreapproveClaude(QuietTestCase):
             )
             self.assertTrue(data["projects"][proj_key]["hasTrustDialogAccepted"])
 
+    def test_per_project_entries_from_resolved_mcp_json(self):
+        """One project entry for repos/ plus one per repo dir; each gets sorted
+        enabledMcpjsonServers from the file that dir actually resolves. A repo
+        shipping its own .mcp.json gets THAT file's server names."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            workspace = Path(tmp) / "workspace"
+            repos = workspace / "repos"
+            repos.mkdir(parents=True)
+            (repos / ".mcp.json").write_text(
+                '{"mcpServers": {"coding": {}, "obsidian-annotated": {}}}\n')
+
+            linked = repos / "linked"
+            linked.mkdir()
+            (linked / ".git").mkdir()
+            (linked / ".mcp.json").symlink_to("../.mcp.json")
+
+            shipped = repos / "shipped"
+            shipped.mkdir()
+            (shipped / ".git").mkdir()
+            (shipped / ".mcp.json").write_text(
+                '{"mcpServers": {"custom-only": {}, "also": {}}}\n')
+
+            wire_plugins.preapprove_claude(home, workspace)
+
+            data = json.loads((home / ".claude.json").read_text())
+            projects = data["projects"]
+            self.assertEqual(
+                projects[str(repos)]["enabledMcpjsonServers"],
+                ["coding", "obsidian-annotated"])
+            self.assertEqual(
+                projects[str(linked)]["enabledMcpjsonServers"],
+                ["coding", "obsidian-annotated"])
+            self.assertEqual(
+                projects[str(shipped)]["enabledMcpjsonServers"],
+                ["also", "custom-only"])
+            for key in (str(repos), str(linked), str(shipped)):
+                self.assertTrue(projects[key]["hasTrustDialogAccepted"])
+
     def test_existing_claude_json_preserves_unrelated_keys(self):
         """Existing ~/.claude.json with unrelated keys and project → those survive."""
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
-            main_dir = workspace / "main"
-            main_dir.mkdir()
-            mcp_path = main_dir / ".mcp.json"
+            repos_dir = workspace / "repos"
+            repos_dir.mkdir()
+            mcp_path = repos_dir / ".mcp.json"
             mcp_path.write_text('{"mcpServers": {"coding": {}}}')
 
             cj = home / ".claude.json"
             initial_state = {
                 "other_key": "value",
                 "projects": {
-                    str(workspace / "main"): {
+                    str(repos_dir): {
                         "someField": "survives",
                     }
                 }
@@ -237,7 +363,7 @@ class TestPreapproveClaude(QuietTestCase):
 
             data = json.loads(cj.read_text())
             self.assertEqual(data["other_key"], "value")
-            proj_key = str(workspace / "main")
+            proj_key = str(repos_dir)
             self.assertEqual(data["projects"][proj_key]["someField"], "survives")
             self.assertEqual(data["projects"][proj_key]["enabledMcpjsonServers"], ["coding"])
 
@@ -247,9 +373,9 @@ class TestPreapproveClaude(QuietTestCase):
             home = Path(tmp)
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
-            main_dir = workspace / "main"
-            main_dir.mkdir()
-            mcp_path = main_dir / ".mcp.json"
+            repos_dir = workspace / "repos"
+            repos_dir.mkdir()
+            mcp_path = repos_dir / ".mcp.json"
             mcp_path.write_text('{"mcpServers": {}}')
 
             cj = home / ".claude.json"
@@ -641,9 +767,11 @@ class TestRunIntegration(QuietTestCase):
             home = Path(tmp)
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
-            main_dir = workspace / "main"
-            main_dir.mkdir()
-            (main_dir / ".git").mkdir()
+            repos_dir = workspace / "repos"
+            repos_dir.mkdir()
+            repo = repos_dir / "app"
+            repo.mkdir()
+            (repo / ".git").mkdir()
 
             env = {"IDENTITY_KEY_0": "LITERALKEY"}
             payload = {
@@ -670,14 +798,20 @@ class TestRunIntegration(QuietTestCase):
 
             wire_plugins.run(payload, home, workspace, env)
 
-            # .mcp.json generated (claude) — gets obsidian (ref) + BOTH plugins
-            self.assertTrue((main_dir / ".mcp.json").exists())
-            claude = json.loads((main_dir / ".mcp.json").read_text())["mcpServers"]
+            # repos/.mcp.json generated (claude) — gets obsidian (ref) + BOTH plugins
+            self.assertTrue((repos_dir / ".mcp.json").exists())
+            claude = json.loads((repos_dir / ".mcp.json").read_text())["mcpServers"]
             self.assertEqual(set(claude), {"obsidian-annotated", "myserena", "coding"})
             self.assertEqual(claude["obsidian-annotated"]["headers"]["Authorization"],
                              "Bearer ${OBSIDIAN_ANNOTATED_KEY}")  # ref, not literal
-            # ~/.claude.json pre-approved
+            # repo dir gets a relative symlink to the canonical file
+            self.assertTrue((repo / ".mcp.json").is_symlink())
+            self.assertEqual(os.readlink(repo / ".mcp.json"), "../.mcp.json")
+            # ~/.claude.json pre-approved for repos/ and the repo dir
             self.assertTrue((home / ".claude.json").exists())
+            projects = json.loads((home / ".claude.json").read_text())["projects"]
+            self.assertIn(str(repos_dir), projects)
+            self.assertIn(str(repo), projects)
             # cursor: obsidian (LITERAL key) + LOCAL plugin only (no remote coding)
             cursor_mcp = home / ".cursor" / "mcp.json"
             self.assertTrue(cursor_mcp.exists())
@@ -706,9 +840,8 @@ class TestRunIntegration(QuietTestCase):
             home = Path(tmp)
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
-            main_dir = workspace / "main"
-            main_dir.mkdir()
-            (main_dir / ".git").mkdir()
+            repos_dir = workspace / "repos"
+            repos_dir.mkdir()
 
             payload = {
                 "wire": {
@@ -724,8 +857,8 @@ class TestRunIntegration(QuietTestCase):
 
             wire_plugins.run(payload, home, workspace, {})
 
-            # claude .mcp.json still generated
-            self.assertTrue((main_dir / ".mcp.json").exists())
+            # claude .mcp.json still generated at the workspace canonical path
+            self.assertTrue((repos_dir / ".mcp.json").exists())
             # No agent home configs
             self.assertFalse((home / ".cursor").exists())
             self.assertFalse((home / ".gemini").exists())
@@ -745,9 +878,7 @@ class TestRunIntegration(QuietTestCase):
             home = Path(tmp)
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
-            main_dir = workspace / "main"
-            main_dir.mkdir()
-            (main_dir / ".git").mkdir()
+            (workspace / "repos").mkdir()
 
             payload = {
                 "plugin_mcp_entries": ["not a dict"],
@@ -776,7 +907,7 @@ class TestNoReservedNames(unittest.TestCase):
 
 
 class TestPreapproveSkipsBadRepoMcpJson(QuietTestCase):
-    """A repo-shipped .mcp.json we can't understand must skip pre-approval
+    """A shipped .mcp.json we can't understand must skip pre-approval
     with a warning, not abort the whole wiring run (the file is explicitly
     not ours; the other agents still need their configs)."""
 
@@ -784,8 +915,8 @@ class TestPreapproveSkipsBadRepoMcpJson(QuietTestCase):
         home = Path(tmp) / "home"
         home.mkdir()
         workspace = Path(tmp) / "workspace"
-        (workspace / "main").mkdir(parents=True)
-        (workspace / "main" / ".mcp.json").write_text(mcp_content)
+        (workspace / "repos").mkdir(parents=True)
+        (workspace / "repos" / ".mcp.json").write_text(mcp_content)
         return home, workspace
 
     def test_no_mcpservers_object_warns_and_skips(self):
@@ -806,6 +937,29 @@ class TestPreapproveSkipsBadRepoMcpJson(QuietTestCase):
             self.assertIn("skipping claude pre-approval", output.getvalue())
             self.assertFalse((home / ".claude.json").exists())
 
+    def test_bad_repo_mcp_does_not_abort_other_dirs(self):
+        """Unreadable/shapeless per-repo .mcp.json skips that dir only."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home, workspace = self._setup(tmp, '{"mcpServers": {"coding": {}}}')
+            bad = workspace / "repos" / "bad"
+            bad.mkdir()
+            (bad / ".git").mkdir()
+            (bad / ".mcp.json").write_text("{not json")
+            good = workspace / "repos" / "good"
+            good.mkdir()
+            (good / ".git").mkdir()
+            (good / ".mcp.json").symlink_to("../.mcp.json")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                wire_plugins.preapprove_claude(home, workspace)
+
+            self.assertIn("skipping claude pre-approval", output.getvalue())
+            data = json.loads((home / ".claude.json").read_text())
+            self.assertIn(str(workspace / "repos"), data["projects"])
+            self.assertIn(str(good), data["projects"])
+            self.assertNotIn(str(bad), data["projects"])
+
     def test_symlinked_claude_json_written_through(self):
         with tempfile.TemporaryDirectory() as tmp:
             home, workspace = self._setup(tmp, '{"mcpServers": {"coding": {}}}')
@@ -815,7 +969,7 @@ class TestPreapproveSkipsBadRepoMcpJson(QuietTestCase):
             wire_plugins.preapprove_claude(home, workspace)
             self.assertTrue((home / ".claude.json").is_symlink())
             data = json.loads(target.read_text())
-            proj = data["projects"][str(workspace / "main")]
+            proj = data["projects"][str(workspace / "repos")]
             self.assertEqual(proj["enabledMcpjsonServers"], ["coding"])
 
 
@@ -928,7 +1082,9 @@ class TestBuildPayload(unittest.TestCase):
             home = Path(tmp) / "home"
             home.mkdir()
             workspace = Path(tmp) / "workspace"
-            (workspace / "main" / ".git").mkdir(parents=True)
+            repos = workspace / "repos"
+            repo = repos / "app"
+            (repo / ".git").mkdir(parents=True)
             env = {"WIRE_CURSOR": "true",
                    "PLUGIN_MCP_ENTRIES": '{"serena": {"command": "bash"}}\n',
                    "AGENT_SERVERS_JSON": json.dumps(self.OBS_SERVERS),
@@ -944,13 +1100,15 @@ class TestBuildPayload(unittest.TestCase):
             self.assertEqual(
                 cursor["mcpServers"]["obsidian-annotated"]["headers"]["Authorization"],
                 "Bearer SECRET")
-            mcp = json.loads((workspace / "main" / ".mcp.json").read_text())
+            mcp = json.loads((repos / ".mcp.json").read_text())
             # claude: obsidian (ref, type:http) then the local plugin
             self.assertEqual(list(mcp["mcpServers"]), ["obsidian-annotated", "serena"])
             self.assertEqual(mcp["mcpServers"]["obsidian-annotated"]["type"], "http")
             self.assertEqual(
                 mcp["mcpServers"]["obsidian-annotated"]["headers"]["Authorization"],
                 "Bearer ${OBSIDIAN_ANNOTATED_KEY}")
+            self.assertTrue((repo / ".mcp.json").is_symlink())
+            self.assertEqual(os.readlink(repo / ".mcp.json"), "../.mcp.json")
 
 
 class TestMainSubprocess(unittest.TestCase):

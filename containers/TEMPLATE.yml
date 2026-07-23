@@ -10,7 +10,10 @@
 # up.sh rebuilds all of it from this file + secrets.env.
 
 task: coding                       # label: coding | research | ... (informational)
-repo: ""                           # https URL cloned to /workspace/main (blank = git init)
+#repos:                            # each → /workspace/repos/<name>; omit/empty →
+#                                  # git init at /workspace/repos/scratch
+#  - https://github.com/org/app.git                # name = URL basename
+#  - {name: lib, url: https://github.com/org/lib.git}
 forge: github                      # github | gitea
 
 git:

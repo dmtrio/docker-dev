@@ -9,7 +9,7 @@ containers/<name>.yml  ──./up.sh <name>──►  dev-agent-<name>
         │                                      ├── agents: claude, codex, pi,
 .dev-agent/secrets.env                         │   gemini, cursor-agent, aider
   (all secret values, gitignored;              ├── egress firewall (zone allowlist)
-   move via DEV_AGENT_HOME)                     ├── /workspace (volume): main/ + worktrees/
+   move via DEV_AGENT_HOME)                     ├── /workspace (volume): repos/<name> + worktrees/
                                                ├── /agent-rules (ro): global rules + skills
 rules/  (bundled default;                       ├── /artifacts → Mac-visible outbox
   override via RULES_PATH)                      └── per-agent identity via shims
@@ -22,7 +22,7 @@ Runtime state (`secrets.env`, keys, artifacts) defaults to a gitignored
 
 ## The two files you author
 
-1. **`containers/<name>.yml`** — one manifest = one container: repo, memory,
+1. **`containers/<name>.yml`** — one manifest = one container: repos, memory,
    tools, capability grants, per-agent identities. Secret-free, committable.
    Copy `containers/TEMPLATE.yml` and edit.
 2. **`secrets.env`** — every secret value, one file, mode 600, never mounted
@@ -30,7 +30,7 @@ Runtime state (`secrets.env`, keys, artifacts) defaults to a gitignored
    and fill in what your manifests reference.
 
 Everything else is derived: `./up.sh <name>` (idempotent) composes
-credentials, applies the firewall, clones the repo, lays out worktrees, and
+credentials, applies the firewall, clones the repos, lays out worktrees, and
 generates MCP configs. `./down.sh <name>` stops (code survives);
 `--purge` forgets the container entirely (artifacts still survive).
 
@@ -73,10 +73,10 @@ cp containers/TEMPLATE.yml containers/my-app.yml
 ./up.sh my-app
 ```
 
-`TEMPLATE.yml` runs unedited (blank repo → git-inits an empty workspace, no
-identities → needs no secrets), so a copy is a working smoke test. Then edit it
-— repo URL, memory, capabilities, identities — and rerun (idempotent). Add any
-secrets it references to `secrets.env`:
+`TEMPLATE.yml` runs unedited (omit/empty `repos:` → git-inits
+`/workspace/repos/scratch`, no identities → needs no secrets), so a copy is a
+working smoke test. Then edit it — repos, memory, capabilities, identities —
+and rerun (idempotent). Add any secrets it references to `secrets.env`:
 
 ```bash
 mkdir -p .dev-agent && cp secrets.env.example .dev-agent/secrets.env   # up.sh also creates it empty
@@ -84,9 +84,10 @@ mkdir -p .dev-agent && cp secrets.env.example .dev-agent/secrets.env   # up.sh a
 
 Then attach: VS Code / Cursor → **"Dev Containers: Attach to Running
 Container"** → `dev-agent-my-app` (lands as `coder` in `/workspace` — open
-`dev.code-workspace` for the multi-root worktree view). Terminal:
-`docker exec -it -u coder dev-agent-my-app bash`. Run `claude` from
-`/workspace/main`.
+`dev.code-workspace` for the multi-root view). Terminal:
+`docker exec -it -u coder dev-agent-my-app bash`. Recommended start:
+`cd /workspace/repos && claude` (sees every repo); starting inside one repo
+also works.
 
 **First session per container** (persists across rebuilds in per-container
 auth volumes): `claude` login; `codex` / `gemini` if used. Agents already

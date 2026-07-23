@@ -1,45 +1,69 @@
 # Workspace Contract — Agent Dev Container
 
 This file governs every session in this container. It lives at
-`/workspace/CLAUDE.md` so it applies to `main/` and every worktree beneath it.
+`/workspace/CLAUDE.md` so it applies to every repo and worktree beneath it.
 
-## Layout
+## Layout (v2)
 
 ```
 /workspace/
-  main/                # primary clone, default branch — the user's stable view
-  worktrees/<branch>/  # one directory per active worktree (yours to manage)
+  repos/<name>/        # every repo the manifest declares — equal siblings
+  repos/.mcp.json      # canonical MCP config (generated; repos symlink to it)
+  worktrees/<repo>/<branch>/  # one directory per active worktree (yours to manage)
   dev.code-workspace   # multi-root VS Code workspace — keep in sync (see below)
 ```
+
+No repo is privileged. The default session sees them all: start Claude from
+`/workspace/repos` (per-repo sessions from inside a repo also work — each repo
+carries a `.mcp.json` symlink to the canonical file).
 
 ## Worktree rules (mandatory)
 
 Worktrees are the first-class way to do feature work here. The user watches
 them live in VS Code/Cursor, so visibility rules are not optional.
 
-- **Create** a worktree for each task/feature:
-  `git -C /workspace/main worktree add ../worktrees/<name> -b <branch>`
+- **Create** a worktree for each task/feature, namespaced by repo:
+  `git -C /workspace/repos/<repo> worktree add ../../worktrees/<repo>/<branch> -b <branch>`
   then link the MCP config into it (Claude Code reads `.mcp.json` only from
   its start directory — without this, MCP tools silently vanish in the
-  worktree): `ln -s ../../main/.mcp.json /workspace/worktrees/<name>/.mcp.json`
+  worktree): `ln -s ../../../repos/.mcp.json /workspace/worktrees/<repo>/<branch>/.mcp.json`
 - **Remove** it after the branch is merged or abandoned:
-  `git -C /workspace/main worktree remove ../worktrees/<name> && git -C /workspace/main worktree prune`
+  `git -C /workspace/repos/<repo> worktree remove ../../worktrees/<repo>/<branch> && git -C /workspace/repos/<repo> worktree prune`
 - **After every create or remove**, update `folders` in
-  `/workspace/dev.code-workspace`: the `main` entry first, then one entry per
-  worktree (`{"path": "worktrees/<name>", "name": "<name>"}`) — matching
-  `git -C /workspace/main worktree list`, sorted by name — then a fixed trailing
-  `{"path": "/artifacts", "name": "artifacts"}` entry. Keep the `artifacts`
-  entry; only the worktree entries track the worktree list. Valid JSON, no
-  trailing commas.
+  `/workspace/dev.code-workspace`: the repo entries first
+  (`{"path": "repos/<name>", "name": "<name>"}`, sorted by name — `up.sh`
+  manages these, leave them intact), then one entry per worktree
+  (`{"path": "worktrees/<repo>/<branch>", "name": "<repo>/<branch>"}`) matching
+  `git -C /workspace/repos/<repo> worktree list` across repos, sorted by name —
+  then a fixed trailing `{"path": "/artifacts", "name": "artifacts"}` entry.
+  Valid JSON, no trailing commas.
 - Do **not** use Claude Code's built-in session worktrees for feature work —
   they live in hidden paths and defeat the visibility requirement.
 
 ## Git rules
 
-- Never delete or break `/workspace/main`.
-- Never commit to the default branch. All work goes through a feature branch
-  in a worktree, pushed with a PR (`gh pr create` or `tea pr create`).
-- Treat `main/` as read-mostly: pull/fetch there, develop in worktrees.
+- Never delete or break anything under `/workspace/repos/`.
+- Never commit to a repo's default branch. All work goes through a feature
+  branch in a worktree, pushed with a PR (`gh pr create` or `tea pr create`).
+- Treat every `repos/<name>` checkout as read-mostly: pull/fetch there,
+  develop in worktrees.
+
+## Cross-repo development (npm link)
+
+Sibling repos exist to be developed concurrently. When one repo consumes
+another as a package:
+
+- Link by **path**, never by global registry: `npm link ../<lib>` from a repo,
+  or the equivalent relative path from a worktree (worktree→worktree linking
+  is the normal shape for feature-branch-against-feature-branch work). Bare
+  `npm link` in the lib registers ONE global slot per package name — a second
+  checkout or another agent relinking silently retargets the first.
+- Never commit `file:` paths into `package.json` — that encodes this
+  container's layout into the repo.
+- Peer-dependency pitfall: a linked lib resolves deps from its own
+  `node_modules`, so peers (React, canonically) get duplicated — "invalid
+  hook call"-style failures. Link the peer back into the lib or alias it in
+  the bundler.
 
 ## Artifacts outbox — `/artifacts`
 

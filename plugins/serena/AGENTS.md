@@ -1,9 +1,9 @@
 ## Serena (semantic code tools)
 
-- **Serena is rooted at ONE project at a time and defaults to `/workspace/main`.**
-  Before using it on worktree code, call `activate_project <worktree-path>` —
-  otherwise reads and *edits* silently target `main`, not your worktree. Do this
-  at the START of each phase, right after `git worktree add`.
+- **Serena is rooted at ONE project at a time.** Activate the repo you're in:
+  `activate_project /workspace/repos/<name>` (or a worktree path). Otherwise
+  reads and *edits* silently target the wrong checkout. Do this at the START of
+  each phase.
 - **Use Serena for reading/tracing first** — this is its highest-value use:
   `get_symbols_overview` to map a file, `find_symbol … include_body` to pull just
   the symbol you need, `find_referencing_symbols` to trace callers. Targeted

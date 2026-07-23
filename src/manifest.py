@@ -28,7 +28,8 @@ assignments it prints:
 
 Behavioral fidelity notes (each is pinned by tests/test_manifest.py):
 - yq/jq `//` treats false AND null as empty: `plugins: false` means "no
-  plugins", `repo: false` reads as "", `tools: false` gets the default set.
+  plugins", `repos: false` means no repos, `tools: false` gets the default
+  set. The old scalar `repo:` key is rejected outright (layout v2).
 - The old `tools | contains(["claude"])` had jq's SUBSTRING semantics for
   strings inside arrays (tools: [claude-code] enabled claude too). Ported
   as-is; tightening it is a deliberate future change, not a port surprise.
@@ -68,6 +69,8 @@ import sys
 # trailing newlines — word splitting ate them).
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 REF_RE = re.compile(r"^[A-Za-z0-9_]+\Z")
+# Directory name under /workspace/repos/<name> — no slash, no leading dot/dash.
+REPO_DIR_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*\Z")
 DOMAIN_RE = re.compile(
     r"^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
     r"[A-Za-z][A-Za-z0-9-]{0,61}[A-Za-z0-9]\Z"
@@ -223,7 +226,66 @@ def derive(manifest, plugin_files, env):
     secrets_file = env.get("SECRETS_FILE", "secrets.env")
 
     # ── Scalars (old Y() reads + defaults) ──────────────────────────────
-    out["REPO_URL"] = _scalar(manifest.get("repo"), "repo")
+    # layout v2: repo: (scalar) is gone; repos: is a list of URLs / {name, url}.
+    if "repo" in manifest:
+        raise ManifestError(
+            "manifest repo: is gone — declare repos: [<url>, ...] instead "
+            "(layout v2: each repo clones to /workspace/repos/<name>)")
+    repos_val = manifest.get("repos")
+    if _falsy(repos_val):
+        repos_val = []
+    elif not isinstance(repos_val, list):
+        raise ManifestError("manifest repos: must be a list of URLs or {name, url} maps")
+    repo_errors = []
+    parsed_repos = []
+    seen_repo_names = set()
+    for entry in repos_val:
+        if isinstance(entry, str):
+            url, explicit_name = entry, None
+        elif isinstance(entry, dict):
+            url = entry.get("url")
+            explicit_name = entry["name"] if "name" in entry else None
+        else:
+            repo_errors.append(
+                f"  repos entry: must be a URL string or {{name, url}} map "
+                f"(got a {_yaml_type(entry)})")
+            continue
+        if not isinstance(url, str) or url == "":
+            repo_errors.append("  repos entry: url must be a non-empty string")
+            continue
+        if any(c in url for c in (" ", "\t", "\n")):
+            repo_errors.append(f"  repos entry: URL '{url}' contains whitespace")
+            continue
+        if explicit_name is not None:
+            if not isinstance(explicit_name, str):
+                repo_errors.append("  repos entry: name must be a string")
+                continue
+            name = explicit_name
+        else:
+            base = url.rstrip("/")
+            cut = max(base.rfind("/"), base.rfind(":"))
+            name = base[cut + 1:] if cut >= 0 else base
+            if name.endswith(".git"):
+                name = name[:-4]
+            if not name:
+                repo_errors.append(
+                    f"  repos entry: cannot derive a name from URL '{url}'")
+                continue
+        if not REPO_DIR_RE.match(name):
+            repo_errors.append(
+                f"  repos entry: illegal name '{name}' "
+                "(must start with letter/digit/underscore; only letters, digits, . _ - thereafter — "
+                "it becomes a directory under /workspace/repos)")
+            continue
+        if name in seen_repo_names:
+            repo_errors.append(f"  repos entry: duplicate name '{name}'")
+            continue
+        seen_repo_names.add(name)
+        parsed_repos.append((name, url))
+    if repo_errors:
+        raise ManifestError(
+            "manifest repos failed validation:\n" + "\n".join(repo_errors))
+    out["REPOS"] = "".join(f"{name}\t{url}\n" for name, url in parsed_repos)
     forge = _scalar(manifest.get("forge"), "forge") or "github"
     if forge not in ("github", "gitea"):
         raise ManifestError("forge must be github or gitea")
