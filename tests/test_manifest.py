@@ -255,6 +255,23 @@ class TestRepos(unittest.TestCase):
         d = derive({"repos": [{"url": "https://github.com/x/app.git"}]})
         self.assertEqual(d["REPOS"], "app\thttps://github.com/x/app.git\n")
 
+    def test_map_entry_falsy_name_reads_as_absent(self):
+        # yq `//` semantics: name: null / name: false → derive from the URL,
+        # matching every other falsy leaf in this module.
+        for falsy in (None, False):
+            with self.subTest(name=falsy):
+                d = derive({"repos": [{"name": falsy, "url": "https://github.com/x/app.git"}]})
+                self.assertEqual(d["REPOS"], "app\thttps://github.com/x/app.git\n")
+
+    def test_map_entry_unknown_key_raises(self):
+        # A typo'd key must not silently fall back to the URL basename.
+        with self.assertRaises(m.ManifestError) as cm:
+            derive({"repos": [{"nmae": "lib", "url": "https://github.com/x/lib.git"}]})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest repos failed validation:\n"
+            "  repos entry: unsupported field(s): nmae (only name and url)")
+
     def test_multiple_entries_preserve_manifest_order(self):
         d = derive({"repos": [
             "https://github.com/x/beta.git",

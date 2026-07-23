@@ -243,8 +243,16 @@ def derive(manifest, plugin_files, env):
         if isinstance(entry, str):
             url, explicit_name = entry, None
         elif isinstance(entry, dict):
+            # Unknown keys are errors, not ignored — a typo'd `nmae:` would
+            # otherwise silently fall back to the URL basename.
+            extra = ",".join(k for k in entry if k not in ("name", "url"))
+            if extra:
+                repo_errors.append(
+                    f"  repos entry: unsupported field(s): {extra} (only name and url)")
+                continue
             url = entry.get("url")
-            explicit_name = entry["name"] if "name" in entry else None
+            # yq `//` semantics everywhere else: a falsy name reads as absent.
+            explicit_name = None if _falsy(entry.get("name")) else entry.get("name")
         else:
             repo_errors.append(
                 f"  repos entry: must be a URL string or {{name, url}} map "
