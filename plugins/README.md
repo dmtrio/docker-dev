@@ -43,6 +43,7 @@ opinion.
 | [`proxyman`](proxyman/) | remote HTTP | `./service.sh proxyman` | [README](proxyman/README.md) |
 | [`browser`](browser/) | remote HTTP | `./service.sh browser` | [README](browser/README.md) |
 | [`obsidian-annotated`](obsidian-annotated/) | remote HTTP (real host) | — | [README](obsidian-annotated/README.md) |
+| [`axiom`](axiom/) | remote HTTP (real host) | — | [README](axiom/README.md) |
 | [`annotated-watch`](annotated-watch/) | env-only (no server) | — | [README](annotated-watch/README.md) |
 
 ## `plugin.yml` schema

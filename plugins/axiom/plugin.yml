@@ -1,0 +1,20 @@
+# axiom — Axiom's official remote MCP at mcp.axiom.co (a real internet host,
+# reached via egress, so no host_port and no host service). Lets agents query
+# your observability data (logs, traces, events) with APL. See ./README.md.
+#
+# Env-scoped secret: one Axiom API token shared by all agents (like gateway/
+# proxyman). Agent-scoped isn't used here — manifest.py currently only accepts
+# OBSIDIAN_KEY_* sources for agent_secrets, so a shared env token is the
+# bindable model. Bind it in a manifest with:
+#   common_secrets: [AXIOM_TOKEN]        # or {AXIOM_TOKEN: SOME_OTHER_VAR}
+
+secrets:
+  AXIOM_TOKEN: {scope: env, hint: "axiom (an Axiom API token — Settings → API tokens; a scoped token 'xaat-…' is simplest)"}
+
+egress:
+  - mcp.axiom.co
+
+mcp:
+  axiom:
+    url: https://mcp.axiom.co/mcp
+    headers: {Authorization: "Bearer ${AXIOM_TOKEN}"}
