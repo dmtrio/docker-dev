@@ -347,6 +347,97 @@ class TestRepos(unittest.TestCase):
             "  repos entry: URL 'https://github.com/x/a pp.git' contains whitespace")
 
 
+class TestGitIdentity(unittest.TestCase):
+    # GH_TOKEN_VARS mirrors the set up.sh scans from secrets.env (names only).
+    ENV = {"GH_TOKEN_VARS": "GH_TOKEN_hank GH_TOKEN_vendor GH_TOKEN_v2"}
+
+    def _d(self, git):
+        return derive({"git": git}, env=dict(self.ENV))
+
+    def test_absent_git_identity_is_empty(self):
+        d = derive({})
+        self.assertEqual(d["GIT_TOKEN_SOURCE"], "")
+        self.assertEqual(d["GIT_ORG_TOKENS"], "")
+        self.assertEqual(d["GIT_ORG_IDENTITIES"], "")
+
+    def test_default_token_source(self):
+        d = self._d({"token": "GH_TOKEN_hank"})
+        self.assertEqual(d["GIT_TOKEN_SOURCE"], "GH_TOKEN_hank")
+
+    def test_default_token_missing_var_hard_fails(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"token": "GH_TOKEN_nope"})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest git identity failed validation:\n"
+            "  git.token: GH_TOKEN_nope not found in secrets.env")
+
+    def test_per_org_token_routing_and_canonical_var(self):
+        d = self._d({"token": "GH_TOKEN_hank",
+                     "orgs": {"vendor": {"token": "GH_TOKEN_vendor",
+                                         "name": "Vendor Bot", "email": "bot@vendor.io"}}})
+        # owner<TAB>canonical_var<TAB>source_var — canonical is GH_TOKEN_<owner>.
+        self.assertEqual(d["GIT_ORG_TOKENS"], "vendor\tGH_TOKEN_vendor\tGH_TOKEN_vendor\n")
+        self.assertEqual(d["GIT_ORG_IDENTITIES"], "vendor\tVendor Bot\tbot@vendor.io\n")
+
+    def test_hyphenated_owner_sanitizes_to_underscore(self):
+        # canonical var replaces '-' with '_'; the source var name is unchanged.
+        d = self._d({"orgs": {"acme-corp": {"token": "GH_TOKEN_v2"}}})
+        self.assertEqual(d["GIT_ORG_TOKENS"], "acme-corp\tGH_TOKEN_acme_corp\tGH_TOKEN_v2\n")
+        self.assertEqual(d["GIT_ORG_IDENTITIES"], "acme-corp\t\t\n")
+
+    def test_org_missing_token_hard_fails(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"orgs": {"vendor": {"name": "Bot"}}})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest git identity failed validation:\n"
+            "  git.orgs.vendor.token: needs token: (a secrets.env var name)")
+
+    def test_org_token_missing_var_hard_fails(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"orgs": {"vendor": {"token": "GH_TOKEN_nope"}}})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest git identity failed validation:\n"
+            "  git.orgs.vendor.token: GH_TOKEN_nope not found in secrets.env")
+
+    def test_org_unsupported_field_hard_fails(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"orgs": {"vendor": {"token": "GH_TOKEN_vendor", "tokne": "x"}}})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest git identity failed validation:\n"
+            "  git.orgs.vendor: unsupported field(s): tokne (only token, name, email)")
+
+    def test_illegal_owner_hard_fails(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"orgs": {"-bad": {"token": "GH_TOKEN_vendor"}}})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest git identity failed validation:\n"
+            "  git.orgs: illegal owner '-bad' (a forge org/user name)")
+
+    def test_orgs_wrong_type_hard_fails(self):
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"orgs": ["vendor"]})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest git identity failed validation:\n"
+            "  git.orgs: must be a map of <owner>: {token, name, email}")
+
+    def test_errors_aggregate(self):
+        # Both a bad default and a bad org surface together (aggregated list).
+        with self.assertRaises(m.ManifestError) as cm:
+            self._d({"token": "GH_TOKEN_nope",
+                     "orgs": {"vendor": {"token": "GH_TOKEN_alsonope"}}})
+        self.assertEqual(
+            str(cm.exception),
+            "manifest git identity failed validation:\n"
+            "  git.token: GH_TOKEN_nope not found in secrets.env\n"
+            "  git.orgs.vendor.token: GH_TOKEN_alsonope not found in secrets.env")
+
+
 class TestDerivedValues(unittest.TestCase):
     def test_defaults_on_empty_manifest(self):
         d = derive({})
