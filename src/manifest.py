@@ -71,6 +71,11 @@ NAME_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 REF_RE = re.compile(r"^[A-Za-z0-9_]+\Z")
 # Directory name under /workspace/repos/<name> — no slash, no leading dot/dash.
 REPO_DIR_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*\Z")
+# Forge org/user name (git.orgs key). GitHub's own rule: alphanumerics and
+# single hyphens, no leading/trailing hyphen. Only '-' is non-alphanumeric, so
+# the GH_TOKEN_<owner> sanitization (below) is a bijection over valid owners —
+# two distinct owners can never collide on one token var.
+OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\Z")
 DOMAIN_RE = re.compile(
     r"^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
     r"[A-Za-z][A-Za-z0-9-]{0,61}[A-Za-z0-9]\Z"
@@ -208,6 +213,83 @@ def _parse_secret(val, plugin, slot):
     return scope, hint
 
 
+def _canonical_token_var(owner):
+    """The in-container env var a per-org token lands in — keyfiles.sh writes it,
+    git-credential-org.sh reads it. This derivation MUST match the shell one in
+    that helper byte-for-byte: GH_TOKEN_ + every non-alphanumeric replaced by _.
+    (OWNER_RE admits only alphanumerics and '-', so this is injective.)"""
+    return "GH_TOKEN_" + re.sub(r"[^A-Za-z0-9]", "_", owner)
+
+
+def _git_identity(git, env, secrets_file):
+    """Derive git credential routing from the git: section — NAMES only, per the
+    module contract (up.sh resolves the secret VALUES). git.token names the
+    default credential's secrets.env var; git.orgs.<owner>.{token,name,email}
+    override per forge owner. A token: that isn't a currently-set secrets.env var
+    (GH_TOKEN_VARS lists the ones up.sh scanned) is a hard error — never a silent
+    fall-back to the wrong identity, which is the whole reason this exists.
+
+    Emits:
+      GIT_TOKEN_SOURCE     default token's source var name ("" = keep global GH_TOKEN)
+      GIT_ORG_TOKENS       owner<TAB>canonical_var<TAB>source_var per line
+      GIT_ORG_IDENTITIES   owner<TAB>name<TAB>email per line
+    """
+    token_vars = set((env.get("GH_TOKEN_VARS") or "").split())
+    errors = []
+
+    def source(val, field, required):
+        src = _scalar(val, field)
+        if not src:
+            if required:
+                errors.append(f"  {field}: needs token: (a secrets.env var name)")
+            return ""
+        if not REF_RE.match(src):
+            errors.append(f"  {field}: '{src}' is not a valid env var name")
+            return ""
+        if src not in token_vars:
+            errors.append(f"  {field}: {src} not found in {secrets_file}")
+            return ""
+        return src
+
+    default_source = source(git.get("token"), "git.token", required=False)
+
+    orgs = git.get("orgs")
+    records = []  # (owner, canonical_var, source_var, name, email)
+    if not _falsy(orgs):
+        if not isinstance(orgs, dict):
+            errors.append("  git.orgs: must be a map of <owner>: {token, name, email}")
+            orgs = {}
+        for owner, spec in orgs.items():
+            field = f"git.orgs.{owner}"
+            if not isinstance(owner, str) or not OWNER_RE.match(owner):
+                errors.append(f"  git.orgs: illegal owner '{owner}' (a forge org/user name)")
+                continue
+            if _falsy(spec):
+                spec = {}
+            if not isinstance(spec, dict):
+                errors.append(f"  {field}: must be a map of {{token, name, email}}")
+                continue
+            extra = ",".join(k for k in spec if k not in ("token", "name", "email"))
+            if extra:
+                errors.append(f"  {field}: unsupported field(s): {extra} (only token, name, email)")
+                continue
+            src = source(spec.get("token"), f"{field}.token", required=True)
+            if not src:
+                continue
+            records.append((owner, _canonical_token_var(owner), src,
+                            _scalar(spec.get("name"), f"{field}.name"),
+                            _scalar(spec.get("email"), f"{field}.email")))
+
+    if errors:
+        raise ManifestError("manifest git identity failed validation:\n" + "\n".join(errors))
+
+    return {
+        "GIT_TOKEN_SOURCE": default_source,
+        "GIT_ORG_TOKENS": "".join(f"{o}\t{c}\t{s}\n" for o, c, s, _, _ in records),
+        "GIT_ORG_IDENTITIES": "".join(f"{o}\t{n}\t{e}\n" for o, _, _, n, e in records),
+    }
+
+
 class Derived(dict):
     """Ordered VAR → value string map with shell-quoted rendering."""
 
@@ -301,6 +383,7 @@ def derive(manifest, plugin_files, env):
     git = _section(manifest, "git")
     out["GIT_USER_NAME"] = _scalar(git.get("name"), "git.name") or env.get("GIT_NAME_DEFAULT", "")
     out["GIT_USER_EMAIL"] = _scalar(git.get("email"), "git.email") or env.get("GIT_EMAIL_DEFAULT", "")
+    out.update(_git_identity(git, env, secrets_file))
     out["MEM_LIMIT"] = _scalar(manifest.get("memory"), "memory") or "2g"
 
     # ── Tools ───────────────────────────────────────────────────────────
