@@ -6,7 +6,8 @@ by if-not-exists, so manifest edits on a live container never updated it.
 This helper replaces that: it MERGES REPO_NAMES (space-separated repo dir
 names) into the file idempotently — adding any missing repos/<n> folders,
 never deleting worktree or hand-added entries, and always leaving /artifacts
-last.
+last. A freshly-created file also pins the integrated terminal's default cwd
+to /workspace/repos, so new containers don't open shells in /artifacts.
 
 Runs in-container as:
   python3 /usr/local/lib/dev-agent/code_workspace.py /workspace/dev.code-workspace
@@ -41,7 +42,12 @@ def parse_repo_names(env):
 def default_document(names):
     folders = [{"path": f"repos/{n}", "name": n} for n in sorted(names)]
     folders.append({"path": "/artifacts", "name": "artifacts"})
-    return {"folders": folders, "settings": {}}
+    # New integrated terminals default to the workspace's first folder unless
+    # told otherwise; with /artifacts last in the list that mostly holds, but
+    # VS Code can still land a fresh terminal in whichever folder last had
+    # focus. Pin it explicitly so a new container always opens shells in
+    # /workspace/repos, never /artifacts.
+    return {"folders": folders, "settings": {"terminal.integrated.cwd": "/workspace/repos"}}
 
 
 def merge_folders(existing, names):

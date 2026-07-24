@@ -43,7 +43,9 @@ class FreshFileTests(unittest.TestCase):
                 {"path": "/artifacts", "name": "artifacts"},
             ],
         )
-        self.assertEqual(data["settings"], {})
+        self.assertEqual(
+            data["settings"], {"terminal.integrated.cwd": "/workspace/repos"}
+        )
 
     def test_empty_repo_names_just_artifacts(self):
         rc = _run(self.path, "")
@@ -52,7 +54,7 @@ class FreshFileTests(unittest.TestCase):
             _load(self.path),
             {
                 "folders": [{"path": "/artifacts", "name": "artifacts"}],
-                "settings": {},
+                "settings": {"terminal.integrated.cwd": "/workspace/repos"},
             },
         )
 
@@ -60,9 +62,13 @@ class FreshFileTests(unittest.TestCase):
         self.path.write_text("", encoding="utf-8")
         rc = _run(self.path, "app")
         self.assertEqual(rc, 0)
+        data = _load(self.path)
         self.assertEqual(
-            [f["path"] for f in _load(self.path)["folders"]],
+            [f["path"] for f in data["folders"]],
             ["repos/app", "/artifacts"],
+        )
+        self.assertEqual(
+            data["settings"], {"terminal.integrated.cwd": "/workspace/repos"}
         )
 
 
