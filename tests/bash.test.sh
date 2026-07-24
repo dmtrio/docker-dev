@@ -7,9 +7,12 @@
 #   - allow-egress.sh       arg parsing + strict domain validation
 #   - update-agent-keys.sh  per-agent key edits (set / remove / common / list)
 #   - plugins/*/run.sh      host launchers' token generate-if-missing + persist
-# Out of scope: container-internal scripts (init-firewall.sh, entrypoint.sh,
-# mosh-server-wrapper.sh, tmux-*) — they run in a built container, and the
-# pure docker orchestration in up.sh (a test would only assert "docker ran").
+#   - src/entrypoint.sh     github.com credential-helper install (idempotent idiom)
+# Out of scope: the rest of the container-internal scripts (init-firewall.sh, the
+# bulk of entrypoint.sh, mosh-server-wrapper.sh, tmux-*) — they run in a built
+# container, and the pure docker orchestration in up.sh (a test would only assert
+# "docker ran"). The credential-helper install IS covered because it is pure git
+# config logic exercisable against a temp HOME.
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -149,6 +152,67 @@ assert_contains "no token set → falls back to gh credential" "$out" "password=
 out=$(printf 'protocol=https\nhost=github.com\npath=vendor/lib.git\n' | GH_TOKEN_vendor=vtok bash "$HELPER" store); rc=$?
 assert_rc "store is a no-op (rc 0)" 0 "$rc"
 assert_eq "store produces no output" "" "$out"
+
+# ────────────────────────────────────────────────────────────────────────────
+echo "── entrypoint.sh: github.com credential-helper install ──"
+# entrypoint.sh installs git-credential-org as the github.com helper. VS Code's
+# dev-container GitHub feature pre-seeds — and can DUPLICATE, across windows/
+# re-attaches — credential.'https://github.com'.helper (= !gh auth git-credential)
+# before the entrypoint runs. A plain `git config` set then aborts ("cannot
+# overwrite multiple values"), the router never lands, and the generic desktop
+# credential bridge answers first → git ops leak the human login. The fix is the
+# reset(empty)+add idiom: idempotent regardless of prior count, AND the empty
+# reset clears the inherited generic bridge so the router leads the chain.
+EH="$WORK/ep-home"; mkdir -p "$EH"
+# The desktop bridge lives in SYSTEM scope (/etc/gitconfig) in a real container;
+# model it there via GIT_CONFIG_SYSTEM so the test is hermetic (independent of the
+# host's own /etc/gitconfig) and proves the global reset clears a SYSTEM helper.
+SYSCFG="$EH/system.gitconfig"
+printf '[credential]\n\thelper = !desktop-bridge\n' > "$SYSCFG"
+seed_home() {   # ~/.gitconfig as VS Code's GitHub feature leaves it: a DUPLICATED gh helper
+  cat > "$EH/.gitconfig" <<'SEED'
+[credential "https://github.com"]
+	helper = !gh auth git-credential
+	helper = !gh auth git-credential
+SEED
+}
+gc() { HOME="$EH" GIT_CONFIG_SYSTEM="$SYSCFG" git config --global "$@"; }
+
+# Baseline: the OLD plain set is what regressed — prove it fails on the seed so
+# the fix below is demonstrably necessary, not cosmetic.
+seed_home
+out=$(gc credential.'https://github.com'.helper /usr/local/bin/git-credential-org 2>&1); rc=$?
+assert_rc "plain set aborts on VS Code's duplicated pre-seed (the reported bug)" 5 "$rc"
+assert_contains "…with the multiple-values error" "$out" "cannot overwrite multiple values"
+
+# The fix: reset(empty)+add, verbatim from entrypoint.sh (minus `su … coder`).
+install_helper() {
+  gc --unset-all credential.'https://github.com'.helper 2>/dev/null || true
+  gc --add credential.'https://github.com'.helper ''
+  gc --add credential.'https://github.com'.helper /usr/local/bin/git-credential-org
+}
+seed_home; install_helper; rc=$?
+assert_rc "reset+add succeeds despite the duplicated pre-seed" 0 "$rc"
+install_helper; rc=$?   # container restart / re-attach runs it again
+assert_rc "reset+add is idempotent on re-run" 0 "$rc"
+
+# The payoff: the effective helper chain git would use for a github.com URL is
+# ONLY the router — the empty reset dropped the inherited desktop bridge, so no
+# human-login leak. --get-urlmatch merges generic+host-specific honouring resets.
+eff=$(HOME="$EH" GIT_CONFIG_SYSTEM="$SYSCFG" git config --get-urlmatch credential.helper https://github.com/dmtrio/x.git)
+assert_eq "router is the sole effective github.com helper (bridge cleared)" \
+    "/usr/local/bin/git-credential-org" "$eff"
+
+# Drift pin: entrypoint.sh must keep the idempotent idiom. If anyone reverts to a
+# plain `git config … helper <value>` set, these fail loudly (mirrors the
+# up.sh/plugins.test.sh drift pins).
+EP=$(cat "$REPO/src/entrypoint.sh")
+assert_contains "entrypoint resets the helper list (--unset-all)" \
+    "$EP" "--unset-all credential.'https://github.com'.helper"
+assert_contains "entrypoint adds an empty reset before the router" \
+    "$EP" "--add credential.'https://github.com'.helper ''"
+assert_contains "entrypoint adds the router via --add (not a plain set)" \
+    "$EP" "--add credential.'https://github.com'.helper /usr/local/bin/git-credential-org"
 
 # ────────────────────────────────────────────────────────────────────────────
 echo "── common.sh ──"

@@ -65,7 +65,17 @@ su -c "git config --global safe.directory /workspace" coder
 # the router so it can read the owner (and makes credential caching per-path,
 # which is harmless here). Router is github-only for now; gitea is a follow-up.
 su -c "git config --global credential.useHttpPath true" coder
-su -c "git config --global credential.'https://github.com'.helper /usr/local/bin/git-credential-org" coder
+# VS Code's dev-container GitHub feature pre-seeds credential.'https://github.com'.helper
+# (= !gh auth git-credential) on every attach, and can duplicate it across windows/
+# re-attaches. A plain `git config` set then aborts with "cannot overwrite multiple
+# values", leaving the router UNinstalled — and the desktop credential bridge
+# (credential.helper in /etc/gitconfig) answers first, so git ops leak the human's
+# login instead of the per-org token. Reset the github.com helper list (empty value)
+# and add the router as the leading helper: idempotent across re-runs and
+# authoritative over the desktop bridge.
+su -c "git config --global --unset-all credential.'https://github.com'.helper" coder 2>/dev/null || true
+su -c "git config --global --add credential.'https://github.com'.helper ''" coder
+su -c "git config --global --add credential.'https://github.com'.helper /usr/local/bin/git-credential-org" coder
 
 # ── SSH mode vs attach mode ───────────────────────────────────────────────────
 if [ "$SSH_ENABLED" = "true" ]; then
