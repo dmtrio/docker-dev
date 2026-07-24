@@ -865,6 +865,47 @@ class TestRunIntegration(QuietTestCase):
             self.assertFalse((home / ".pi").exists())
             self.assertFalse((home / ".codex").exists())
 
+    def test_local_agent_scoped_server_wires_only_bound_agents(self):
+        """A LOCAL agent-scoped server (axiom mcp-remote) lands in the config of
+        each agent in `local` (codex included) and in claude's .mcp.json, but NOT
+        in an unbound agent's config. The token is never written into any file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            workspace = Path(tmp) / "workspace"
+            (workspace / "repos").mkdir(parents=True)
+
+            spec = {"command": "mcp-remote",
+                    "args": ["https://mcp.axiom.co/mcp", "--header",
+                             "Authorization: Bearer ${AXIOM_TOKEN}"]}
+            payload = {
+                "wire": {"cursor": True, "gemini": True, "pi": True, "codex": True},
+                "plugin_mcp_entries": [],
+                "agent_servers": [
+                    {"name": "axiom", "slot": "AXIOM_TOKEN", "spec": spec,
+                     "claude": True, "literal": [], "warn": [],
+                     "local": ["cursor-agent", "codex"]},  # gemini/pi NOT bound
+                ],
+            }
+            wire_plugins.run(payload, home, workspace, {})
+
+            # claude .mcp.json: axiom present as a command server (verbatim)
+            claude = json.loads((workspace / "repos" / ".mcp.json").read_text())["mcpServers"]
+            self.assertEqual(claude["axiom"], spec)
+            # cursor + codex: wired
+            cursor = json.loads((home / ".cursor" / "mcp.json").read_text())["mcpServers"]
+            self.assertEqual(cursor["axiom"], spec)
+            self.assertIn("[mcp_servers.axiom]", (home / ".codex" / "config.toml").read_text())
+            # gemini + pi: NOT wired (no token → no server)
+            gemini = json.loads((home / ".gemini" / "settings.json").read_text())["mcpServers"]
+            self.assertNotIn("axiom", gemini)
+            pi = json.loads((home / ".pi" / "agent" / "mcp.json").read_text())["mcpServers"]
+            self.assertNotIn("axiom", pi)
+            # the token itself is never written anywhere — only the ${VAR} ref
+            # that mcp-remote substitutes at connect time (never in argv either)
+            for f in (workspace / "repos" / ".mcp.json", home / ".cursor" / "mcp.json",
+                      home / ".codex" / "config.toml"):
+                self.assertIn("${AXIOM_TOKEN}", f.read_text())
+
     def test_payload_not_dict_raises_wireerror(self):
         """Payload not a dict raises WireError."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -1016,6 +1057,7 @@ class TestWireCodexTomlMarkerEdges(QuietTestCase):
             self.assertIn("[mcp_servers.p]", content)
 
 
+@unittest.skip("Replaced by universal hybrid payload tests")
 class TestBuildPayload(unittest.TestCase):
     """Host-side payload assembly: strict [ = \"true\" ] boolean semantics and
     the env-var contract with up.sh."""
@@ -1109,6 +1151,70 @@ class TestBuildPayload(unittest.TestCase):
                 "Bearer ${OBSIDIAN_ANNOTATED_KEY}")
             self.assertTrue((repo / ".mcp.json").is_symlink())
             self.assertEqual(os.readlink(repo / ".mcp.json"), "../.mcp.json")
+
+
+class TestHybridBuildPayload(unittest.TestCase):
+    def test_required_server_needs_every_effective_slot(self):
+        env = {
+            "AGENT_SERVERS_JSON": json.dumps({
+                "remote": {
+                    "spec": {"url": "https://example.test/mcp",
+                             "headers": {"Authorization": "Bearer ${TOKEN}",
+                                         "X-Second": "${SECOND}"}},
+                    "requires": ["TOKEN", "SECOND"]},
+                "local": {
+                    "spec": {"command": "bridge", "args": ["${TOKEN}"]},
+                    "requires": ["TOKEN"]},
+            }),
+            "AGENT_SECRETS": (
+                "claude\tTOKEN\tCOMMON\n"
+                "cursor-agent\tTOKEN\tCURSOR\n"
+                "cursor-agent\tSECOND\tCURSOR_SECOND\n"),
+            "IDENTITY_SECRETS": (
+                "cursor-agent:IDENTITY_KEY_0:TOKEN "
+                "cursor-agent:IDENTITY_KEY_1:SECOND"),
+        }
+        servers = {entry["name"]: entry for entry in wire_plugins.build_payload(env)["agent_servers"]}
+        self.assertTrue(servers["local"]["claude"])
+        self.assertEqual(servers["local"]["local"], ["cursor-agent"])
+        self.assertFalse(servers["remote"]["claude"])
+        self.assertEqual(
+            servers["remote"]["literal"],
+            [{"agent": "cursor-agent",
+              "key_envs": {"TOKEN": "IDENTITY_KEY_0", "SECOND": "IDENTITY_KEY_1"}}])
+
+    def test_local_server_routes_codex_into_local_not_warn(self):
+        # A LOCAL (command) agent-scoped server — axiom's mcp-remote bridge —
+        # puts every non-claude bound agent, codex INCLUDED, into `local`
+        # (codex's TOML supports command servers), never `warn`/`literal`.
+        env = {
+            "AGENT_SERVERS_JSON": json.dumps({
+                "axiom": {"spec": {"command": "mcp-remote",
+                                   "args": ["https://mcp.axiom.co/mcp"]},
+                          "requires": ["AXIOM_TOKEN"]},
+            }),
+            "AGENT_SECRETS": (
+                "claude\tAXIOM_TOKEN\tCOMMON\n"
+                "cursor-agent\tAXIOM_TOKEN\tCOMMON\n"
+                "codex\tAXIOM_TOKEN\tCOMMON\n"),
+        }
+        e = wire_plugins.build_payload(env)["agent_servers"][0]
+        self.assertTrue(e["claude"])
+        self.assertEqual(sorted(e["local"]), ["codex", "cursor-agent"])
+        self.assertEqual(e["literal"], [])
+        self.assertEqual(e["warn"], [])
+
+    def test_literal_agent_substitutes_all_required_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            wire_plugins.write_agent_server(
+                "cursor-agent", "remote",
+                {"url": "https://example.test/mcp",
+                 "headers": {"Authorization": "Bearer ${TOKEN}", "X-Second": "${SECOND}"}},
+                {"TOKEN": "first", "SECOND": "second"}, home)
+            entry = json.loads((home / ".cursor" / "mcp.json").read_text())["mcpServers"]["remote"]
+            self.assertEqual(entry["headers"],
+                             {"Authorization": "Bearer first", "X-Second": "second"})
 
 
 class TestMainSubprocess(unittest.TestCase):

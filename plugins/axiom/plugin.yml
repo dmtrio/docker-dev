@@ -1,20 +1,44 @@
-# axiom — Axiom's official remote MCP at mcp.axiom.co (a real internet host,
-# reached via egress, so no host_port and no host service). Lets agents query
-# your observability data (logs, traces, events) with APL. See ./README.md.
+# axiom — Axiom's official MCP, bridged to LOCAL stdio via `mcp-remote` so EVERY
+# agent (claude, cursor, gemini, codex; pi once its adapter is installed) reaches
+# it uniformly, not just Claude. mcp-remote (baked into the image by the install:
+# block) is a stdio↔HTTP proxy to mcp.axiom.co; being a local command server it
+# wires into every agent through the ordinary local-plugin path — no per-agent
+# remote-header injection. Axiom documents exactly this bridge (mcp-remote <url>).
+# See ./README.md.
 #
-# Env-scoped secret: one Axiom API token shared by all agents (like gateway/
-# proxyman). Agent-scoped isn't used here — manifest.py currently only accepts
-# OBSIDIAN_KEY_* sources for agent_secrets, so a shared env token is the
-# bindable model. Bind it in a manifest with:
-#   common_secrets: [AXIOM_TOKEN]        # or {AXIOM_TOKEN: SOME_OTHER_VAR}
+# Hybrid secret resolution gates WHICH agents get axiom:
+#   • common_secrets: [AXIOM_TOKEN] → shared default for every enabled agent
+#   • agent_secrets override or disable individual agents
+# The resolved token is delivered into each bound agent's shim env (keyfiles.sh)
+# and
+# mcp-remote itself substitutes ${AXIOM_TOKEN} into the header at connect time.
+# So the secret is in NO MCP config file AND never on the process command line
+# (argv holds the literal "${AXIOM_TOKEN}", not the value). Bind it in a manifest:
+#   common_secrets: [AXIOM_TOKEN]               # shared default
+#   agent_secrets:                              # per-agent override / disable
+#     - {agent: cursor-agent, slot: AXIOM_TOKEN, secret: AXIOM_KEY_cursor}
+#
+# The server execs the baked `mcp-remote` binary directly (not `npx`), so process
+# startup never reaches for the npm registry — it runs fully offline.
+
+install: |
+  # Bake the stdio↔remote bridge at build time (full network) so it runs offline
+  # behind the runtime egress firewall. node/npm come from the fnm env eval.
+  # Floor the version: mcp-remote substitutes ${VAR} in --header from its own
+  # process.env (verified in 0.1.38, dist/chunk — the header regex tolerates the
+  # space in "Bearer ${AXIOM_TOKEN}"). Pinning >=0.1.38 keeps that behavior from
+  # regressing out on a future install; without it the literal ${AXIOM_TOKEN}
+  # could ship and every agent would 401.
+  npm install -g 'mcp-remote@^0.1.38'
 
 secrets:
-  AXIOM_TOKEN: {scope: env, hint: "axiom (an Axiom API token — Settings → API tokens; a scoped token 'xaat-…' is simplest)"}
+  AXIOM_TOKEN: {hint: "axiom (an Axiom API token — Settings → API tokens; a scoped token 'xaat-…' is simplest)"}
 
 egress:
   - mcp.axiom.co
 
 mcp:
   axiom:
-    url: https://mcp.axiom.co/mcp
-    headers: {Authorization: "Bearer ${AXIOM_TOKEN}"}
+    command: mcp-remote
+    args: ["https://mcp.axiom.co/mcp", "--header", "Authorization: Bearer ${AXIOM_TOKEN}"]
+    requires: [AXIOM_TOKEN]
